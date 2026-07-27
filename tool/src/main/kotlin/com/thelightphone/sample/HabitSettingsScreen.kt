@@ -1,6 +1,5 @@
 package com.thelightphone.sample
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,37 +16,37 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
-import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightFullscreenModal
+import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTheme
 import com.thelightphone.sdk.ui.LightThemeController
-import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 
 /**
- * Habit management screen, reached via the settings gear in [HomeScreen]'s bottom bar.
+ * Settings screen, reached via the gear in [HomeScreen]'s bottom bar.
+ *
+ * Habit management itself (rename/archive/delete of *active* habits) lives on the
+ * per-habit screen reached from the grid's edit mode ([HabitDetailScreen]) — one
+ * management surface, not two. What's left here is what doesn't belong on a per-habit
+ * screen: unarchiving (needs *a* home, and there's no more "active habits" list here to
+ * put it next to) and the one real preference the tool has, week start day.
  *
  * Takes the same [HabitTrackerViewModel] instance the home screen uses (constructor
  * injection, same pattern as `AuthenticatorCodeScreen` sharing a repository) rather than
  * creating its own — [SimpleLightScreen] isn't a [com.thelightphone.sdk.LightScreen], so
  * it has no ViewModelStore of its own, and there's no reason to re-read DataStore into a
  * second, independent copy of the same state when one is already loaded and live.
- *
- * Archive is reversible and lives here as a single tap. Delete is only reachable from the
- * archived list and always goes through an inline confirmation step — there is
- * deliberately no delete action anywhere on the main grid.
  */
 class HabitSettingsScreen(
     sealedActivity: SealedLightActivity,
@@ -61,15 +60,15 @@ class HabitSettingsScreen(
         val limitMessage by viewModel.limitMessage.collectAsState()
         var pendingDelete by remember { mutableStateOf<Habit?>(null) }
 
-        val activeHabits = state.habits.filter { it.archivedAt == null }.sortedBy { it.order }
         val archivedHabits = state.habits.filter { it.archivedAt != null }.sortedBy { it.order }
 
         LightTheme(colors = themeColors) {
             Box(modifier = Modifier.fillMaxSize()) {
                 val toDelete = pendingDelete
                 if (toDelete != null) {
-                    DeleteConfirmationContent(
-                        habitName = toDelete.name,
+                    val completionCount = state.completions[toDelete.id]?.size ?: 0
+                    HabitDeleteConfirmationContent(
+                        message = deleteConfirmationMessage(toDelete.name, completionCount),
                         onCancel = { pendingDelete = null },
                         onConfirm = {
                             viewModel.deleteHabit(toDelete.id)
@@ -78,12 +77,20 @@ class HabitSettingsScreen(
                     )
                 } else {
                     HabitSettingsContent(
-                        activeHabits = activeHabits,
+                        weekStart = state.weekStart,
                         archivedHabits = archivedHabits,
                         onBack = { goBack() },
-                        onArchive = viewModel::archiveHabit,
+                        onSetWeekStart = viewModel::setWeekStart,
                         onUnarchive = { habitId -> viewModel.unarchiveHabit(habitId) },
-                        onRequestDelete = { habit -> pendingDelete = habit },
+                        onRequestDelete = { habit ->
+                            val completionCount = state.completions[habit.id]?.size ?: 0
+                            if (completionCount == 0) {
+                                // Nothing would be lost — asking is pure ceremony.
+                                viewModel.deleteHabit(habit.id)
+                            } else {
+                                pendingDelete = habit
+                            }
+                        },
                     )
 
                     limitMessage?.let { message ->
@@ -100,10 +107,10 @@ class HabitSettingsScreen(
 
 @Composable
 private fun HabitSettingsContent(
-    activeHabits: List<Habit>,
+    weekStart: WeekStart,
     archivedHabits: List<Habit>,
     onBack: () -> Unit,
-    onArchive: (String) -> Unit,
+    onSetWeekStart: (WeekStart) -> Unit,
     onUnarchive: (String) -> Unit,
     onRequestDelete: (Habit) -> Unit,
 ) {
@@ -114,7 +121,7 @@ private fun HabitSettingsContent(
                 onClick = onBack,
                 contentDescription = "Back",
             ),
-            center = LightTopBarCenter.Text("Habits"),
+            center = LightTopBarCenter.Text("Settings"),
             modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()),
         )
 
@@ -124,17 +131,17 @@ private fun HabitSettingsContent(
                 .fillMaxWidth()
                 .padding(start = 1f.gridUnitsAsDp()),
         ) {
-            SectionHeader(text = "ACTIVE")
-            if (activeHabits.isEmpty()) {
-                EmptySectionRow(text = "No active habits.")
-            } else {
-                activeHabits.forEach { habit ->
-                    ActiveHabitRow(
-                        habit = habit,
-                        onArchive = { onArchive(habit.id) },
-                    )
-                }
-            }
+            SectionHeader(text = "WEEK STARTS ON")
+            WeekStartRow(
+                label = "Sunday",
+                selected = weekStart == WeekStart.SUNDAY,
+                onClick = { onSetWeekStart(WeekStart.SUNDAY) },
+            )
+            WeekStartRow(
+                label = "Monday",
+                selected = weekStart == WeekStart.MONDAY,
+                onClick = { onSetWeekStart(WeekStart.MONDAY) },
+            )
 
             Spacer(modifier = Modifier.height(1.5f.gridUnitsAsDp()))
 
@@ -174,22 +181,24 @@ private fun EmptySectionRow(text: String) {
     )
 }
 
+/** One radio-style row per option; whichever matches the current preference shows a
+ *  filled selection mark. Tapping either always resolves to a definite state (no
+ *  "deselect" case) since exactly one of Sunday/Monday is always in effect. */
 @Composable
-private fun ActiveHabitRow(habit: Habit, onArchive: () -> Unit) {
+private fun WeekStartRow(label: String, selected: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .lightClickable(onClick = onClick)
             .padding(vertical = 0.75f.gridUnitsAsDp(), horizontal = 0.25f.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        LightText(
-            text = habit.name,
-            variant = LightTextVariant.Copy,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
+        LightIcon(
+            icon = if (selected) LightIcons.SELECT_ON else LightIcons.SELECT_OFF,
+            size = 1.6f,
+            modifier = Modifier.padding(end = 0.75f.gridUnitsAsDp()),
         )
-        RowAction(text = "ARCHIVE", onClick = onArchive)
+        LightText(text = label, variant = LightTextVariant.Copy)
     }
 }
 
@@ -224,42 +233,4 @@ private fun RowAction(text: String, onClick: () -> Unit) {
         underline = true,
         modifier = Modifier.lightClickable(onClick = onClick),
     )
-}
-
-/**
- * Inline (not a navigation-stack screen, not [LightFullscreenModal]) delete confirmation —
- * a fullscreen modal only has room for a message and a single close button, and this needs
- * two: cancel and confirm. Swapping the screen's own content is the simplest way to get a
- * two-choice prompt out of the primitives available.
- */
-@Composable
-private fun DeleteConfirmationContent(habitName: String, onCancel: () -> Unit, onConfirm: () -> Unit) {
-    val colors = LightThemeTokens.colors
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(colors.background),
-    ) {
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(horizontal = 2f.gridUnitsAsDp()),
-            contentAlignment = Alignment.Center,
-        ) {
-            LightText(
-                text = "Delete “$habitName”? Its history can't be recovered.",
-                variant = LightTextVariant.Copy,
-                align = TextAlign.Center,
-            )
-        }
-
-        LightBottomBar(
-            items = listOf(
-                LightBarButton.Text(text = "CANCEL", onClick = onCancel),
-                LightBarButton.Text(text = "DELETE", onClick = onConfirm),
-            ),
-        )
-    }
 }

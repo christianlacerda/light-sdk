@@ -36,7 +36,9 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 const val HABIT_NAME_MAX_LENGTH = 40
 
 /**
- * Full-screen habit-naming flow, reached via `navigateTo` from [HomeScreen].
+ * Full-screen habit-naming flow, reached via `navigateTo` from [HomeScreen] (add) and
+ * from [HabitDetailScreen] (rename — same keyboard/validation flow, just pre-filled
+ * with the existing name and different title/submit copy).
  *
  * A separate screen (rather than a modal) because naming needs the LP3 keyboard,
  * which is itself a full-screen affair (top bar + input + embedded keyboard +
@@ -47,13 +49,18 @@ const val HABIT_NAME_MAX_LENGTH = 40
  * Returns the trimmed name via `goBack(name)` on submit, or no result on cancel
  * (back button/gesture) - the SDK's back-stack only invokes the caller's result
  * callback when a non-null result was set, so a plain `goBack()` is enough to
- * signal "nothing was added."
+ * signal "nothing changed."
  */
-class AddHabitScreen(sealedActivity: SealedLightActivity) : SimpleLightScreen<String>(sealedActivity) {
+class AddHabitScreen(
+    sealedActivity: SealedLightActivity,
+    private val initialName: String = "",
+    private val screenTitle: String = "Name Habit",
+    private val submitLabel: String = "ADD",
+) : SimpleLightScreen<String>(sealedActivity) {
 
     @Composable
     override fun Content() {
-        val textState = rememberTextFieldState("")
+        val textState = rememberTextFieldState(initialName)
         val themeColors by LightThemeController.colors.collectAsState()
         val keyboardOptionsFlow = rememberKeyboardOptions()
 
@@ -72,11 +79,11 @@ class AddHabitScreen(sealedActivity: SealedLightActivity) : SimpleLightScreen<St
 
         LightTheme(colors = themeColors) {
             LightTextInputEditor(
-                title = "Name Habit",
+                title = screenTitle,
                 state = textState,
                 keyboardOptionsFlow = keyboardOptionsFlow,
                 singleLine = true,
-                submitLabel = "ADD",
+                submitLabel = submitLabel,
                 onSubmit = { text ->
                     val trimmed = text.toString().trim()
                     // Reject empty/whitespace-only names by simply not returning -
