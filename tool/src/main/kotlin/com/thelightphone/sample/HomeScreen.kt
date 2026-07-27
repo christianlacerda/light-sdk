@@ -34,6 +34,8 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightFullscreenModal
+import com.thelightphone.sdk.ui.LightGrid
+import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -119,6 +121,21 @@ private fun dayLetterFor(dayOfWeek: DayOfWeek): String = when (dayOfWeek) {
 
 /** Hard cap on the number of *active* habits that can exist at once. Archived habits don't count. */
 private const val MAX_HABITS = 3
+
+/** Width of a day checkbox, in grid units. */
+private const val DAY_CELL_UNITS = 2.3f
+
+/** Grid units of horizontal padding either side of the grid content (see [HabitTrackerScreen]). */
+private const val CONTENT_SIDE_PADDING_UNITS = 2f
+
+/**
+ * How far a day checkbox sits inside its column edge. The seven columns split the content
+ * width evenly and each cell is centred in its column, so the last cell's right edge stops
+ * short of the content's right edge by this much. Anything meant to line up with the strip —
+ * the edit pencil — needs the same inset, or it visibly overhangs.
+ */
+private const val DAY_CELL_EDGE_INSET_UNITS =
+    ((LightGrid.WIDTH - 2 * CONTENT_SIDE_PADDING_UNITS) / 7f - DAY_CELL_UNITS) / 2f
 
 private const val ADD_LIMIT_MESSAGE = "3 habits is the limit — archive one to add another."
 private const val RESTORE_LIMIT_MESSAGE = "3 habits is the limit — archive one to restore this."
@@ -430,7 +447,22 @@ private fun HabitTrackerScreen(
 
                     habits.forEachIndexed { index, habit ->
                         if (index > 0) {
-                            Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
+                            if (editMode) {
+                                // The chevron says a row opens something; this says where one
+                                // tap target ends and the next begins. Splitting the usual gap
+                                // around the line keeps the vertical rhythm identical in both
+                                // modes, so toggling edit doesn't shift the rows.
+                                Spacer(modifier = Modifier.height(0.6f.verticalGridUnitsAsDp()))
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(1.dp)
+                                        .background(LightThemeTokens.colors.contentSecondary),
+                                )
+                                Spacer(modifier = Modifier.height(0.6f.verticalGridUnitsAsDp()))
+                            } else {
+                                Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
+                            }
                         }
                         HabitBlock(
                             habit = habit,
@@ -527,8 +559,9 @@ private fun DayLetterRow(weekStart: LocalDate, todayIndex: Int) {
 /**
  * Not editing: a plain row, cells individually tappable to toggle completion.
  *
- * Editing: the entire row — name and all 7 cells — becomes one bordered tap target
- * that opens [HabitDetailScreen]. Deliberately no per-row delete/action icon: a habit
+ * Editing: the entire row — name and all 7 cells — becomes one tap target that opens
+ * [HabitDetailScreen], marked by a chevron in the name row rather than a box drawn
+ * around the row. Deliberately no per-row delete/action icon: a habit
  * row is already compound (name + a 7-cell strip), so a second affordance crammed into
  * a ~30dp-tall row would be cramped and easy to mis-tap. One large, forgiving target
  * per row instead — cells stop responding to taps individually (see [DayCheckbox]),
@@ -545,20 +578,46 @@ private fun HabitBlock(
     onToggle: (habitId: String, epochDay: Long) -> Unit,
     onRowTap: () -> Unit,
 ) {
-    val colors = LightThemeTokens.colors
-
     val rowContent: @Composable () -> Unit = {
         Column(modifier = Modifier.fillMaxWidth()) {
-            LightText(
-                text = habit.name,
-                variant = LightTextVariant.Detail,
-                // The grid allots exactly one line per habit name; a name that's somehow
-                // longer than HABIT_NAME_MAX_LENGTH (shouldn't happen — the naming screen
-                // enforces the cap while typing) degrades to an ellipsis instead of
-                // wrapping and breaking the layout below it.
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                LightText(
+                    text = habit.name,
+                    variant = LightTextVariant.Detail,
+                    // The grid allots exactly one line per habit name; a name that's somehow
+                    // longer than HABIT_NAME_MAX_LENGTH (shouldn't happen — the naming screen
+                    // enforces the cap while typing) degrades to an ellipsis instead of
+                    // wrapping and breaking the layout below it.
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+
+                // Editing: a chevron in the name row's otherwise-empty right side. It says
+                // "this opens something", which is what a row tap actually does — a box
+                // drawn around the row would only say "these things are grouped".
+                if (editMode) {
+                    // A pencil rather than a chevron: a chevron carries a convention of
+                    // "row navigation, vertically centred", and centring it against the
+                    // full row means putting it beside the strip — which would cut the
+                    // strip below the 350dp that keeps day cells at 50dp. A pencil marks
+                    // the row as editable without implying that geometry.
+                    //
+                    // Sized to the name's text line, not larger: a taller glyph stretches
+                    // this Row and pushes the day strip down, which shifts every habit's
+                    // position the moment edit mode is entered. Kept on the right so the
+                    // name stays left-aligned with the first day cell in both modes.
+                    LightIcon(
+                        icon = LightIcons.PENCIL,
+                        size = 0.8f,
+                        contentDescription = null,
+                        modifier = Modifier.padding(end = DAY_CELL_EDGE_INSET_UNITS.gridUnitsAsDp()),
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(0.35f.verticalGridUnitsAsDp()))
 
@@ -587,12 +646,14 @@ private fun HabitBlock(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .border(width = 1.dp, color = colors.content)
+                // No extra vertical padding: the row content (name + strip) is already
+                // ~80dp tall, well past the 48dp target minimum, and padding here used to
+                // exist only to sit inside the old border. Without it the rows land at the
+                // same y in both modes, so toggling edit doesn't visibly jolt the grid.
                 .lightClickable(
                     onClickLabel = "Edit ${habit.name}",
                     onClick = onRowTap,
-                )
-                .padding(horizontal = 0.6f.gridUnitsAsDp(), vertical = 0.4f.verticalGridUnitsAsDp()),
+                ),
         ) {
             rowContent()
         }
@@ -617,7 +678,7 @@ private fun HabitBlock(
 @Composable
 private fun DayCheckbox(filled: Boolean, isToday: Boolean, isFuture: Boolean, editMode: Boolean, onToggle: (() -> Unit)?) {
     val colors = LightThemeTokens.colors
-    val cellSize = 2.3f.gridUnitsAsDp()
+    val cellSize = DAY_CELL_UNITS.gridUnitsAsDp()
     val haloSize = cellSize + 10.dp
     val dimmed = isFuture || editMode
     val borderColor = if (dimmed) colors.contentSecondary else colors.content
