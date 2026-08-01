@@ -68,6 +68,8 @@ fun LightTopBar(
                     heightUnits = TOPBAR_HEIGHT_UNITS,
                     textVariant = TOPBAR_BUTTON_TEXT_VARIANT,
                     useSpacerWhenNull = true,
+                    hitAreaUnits = TOPBAR_HEIGHT_UNITS,
+                    hitAreaAlignment = Alignment.CenterStart,
                 )
             }
 
@@ -82,6 +84,8 @@ fun LightTopBar(
                     heightUnits = TOPBAR_HEIGHT_UNITS,
                     textVariant = TOPBAR_BUTTON_TEXT_VARIANT,
                     useSpacerWhenNull = true,
+                    hitAreaUnits = TOPBAR_HEIGHT_UNITS,
+                    hitAreaAlignment = Alignment.CenterEnd,
                 )
             }
         }

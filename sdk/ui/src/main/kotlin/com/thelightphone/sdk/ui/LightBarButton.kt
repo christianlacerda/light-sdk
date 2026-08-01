@@ -58,6 +58,8 @@ internal fun LightBarButtonView(
     iconSizeUnits: Float = LightBarButtonDefaults.ICON_SIZE_UNITS,
     textVariant: LightTextVariant,
     useSpacerWhenNull: Boolean,
+    hitAreaUnits: Float? = null,
+    hitAreaAlignment: Alignment = Alignment.Center,
 ) {
     if (button == null) {
         if (useSpacerWhenNull) {
@@ -100,12 +102,25 @@ internal fun LightBarButtonView(
         }
 
         is LightBarButton.LightIcon -> {
-            LightIcon(
-                icon = button.icon,
-                size = button.sizeUnits,
-                modifier = baseModifier,
-                contentDescription = button.contentDescription,
-            )
+            if (hitAreaUnits != null) {
+                Box(
+                    modifier = baseModifier.size(hitAreaUnits.gridUnitsAsDp()),
+                    contentAlignment = hitAreaAlignment,
+                ) {
+                    LightIcon(
+                        icon = button.icon,
+                        size = button.sizeUnits,
+                        contentDescription = button.contentDescription,
+                    )
+                }
+            } else {
+                LightIcon(
+                    icon = button.icon,
+                    size = button.sizeUnits,
+                    modifier = baseModifier,
+                    contentDescription = button.contentDescription,
+                )
+            }
         }
     }
 }
