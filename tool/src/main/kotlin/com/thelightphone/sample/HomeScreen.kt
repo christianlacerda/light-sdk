@@ -546,8 +546,8 @@ private fun HabitTrackerScreen(
                         .weight(1f)
                         .fillMaxWidth()
                         .padding(horizontal = 2f.gridUnitsAsDp()),
-                    // Fixed top-anchored rhythm: the day-letter row always sits directly
-                    // under the top bar, and habit blocks stack below it with a constant
+                    // Fixed top-anchored rhythm: the day-letter row sits a constant gap
+                    // below the top bar, and habit blocks stack below it with the same
                     // gap. (Previously Arrangement.SpaceEvenly redistributed the leftover
                     // vertical space across every gap, which looked fine at 3 habits but
                     // left the day-letter row floating with ~300px of dead space above it
@@ -555,6 +555,10 @@ private fun HabitTrackerScreen(
                     // which reads as normal rather than broken.)
                     verticalArrangement = Arrangement.Top,
                 ) {
+                    // Same 1.2u used below the letters, so the row reads as its own band
+                    // rather than as part of the top bar it was previously flush against.
+                    Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
+
                     DayLetterRow(weekStart = displayedWeekStart, todayIndex = todayIndex)
 
                     Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
