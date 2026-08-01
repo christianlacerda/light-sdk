@@ -31,6 +31,7 @@ import com.thelightphone.sdk.InitialScreen
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightFullscreenModal
@@ -55,9 +56,13 @@ import java.time.temporal.TemporalAdjusters
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -79,8 +84,10 @@ import kotlinx.serialization.json.Json
 data class Habit(
     val id: String,
     val name: String,
-    /** Epoch day ([LocalDate.toEpochDay]) the habit was created. Informational only —
-     *  tracking is not gated on this; a habit can log days before its creation date. */
+    /** Epoch day ([LocalDate.toEpochDay]) the habit was created. Gates tracking at week
+     *  granularity, not the exact day — a habit can log days before its creation date as
+     *  long as they fall in the same week, so day-one still works (create Wednesday, tick
+     *  Monday and Tuesday of that week). */
     val createdAt: Long,
     /** Epoch day the habit was archived, or null if it's active. */
     val archivedAt: Long? = null,
@@ -108,6 +115,12 @@ data class HabitState(
     val completions: Map<String, Set<Long>> = emptyMap(),
     val weekStart: WeekStart = WeekStart.SUNDAY,
 )
+
+/** The Sunday/Monday (per [WeekStart]) on or before this date — the shared "which week
+ *  is this day in" formula used for the grid header, offset clamping, and creation-week
+ *  gating, so those three don't drift against each other. */
+private fun LocalDate.snappedToWeekStart(weekStart: WeekStart): LocalDate =
+    with(TemporalAdjusters.previousOrSame(weekStart.dayOfWeek))
 
 private fun dayLetterFor(dayOfWeek: DayOfWeek): String = when (dayOfWeek) {
     DayOfWeek.SUNDAY -> "S"
@@ -173,6 +186,71 @@ class HabitTrackerViewModel(
         _editMode.value = false
     }
 
+    private val _today = MutableStateFlow(LocalDate.now())
+    val today: StateFlow<LocalDate> = _today.asStateFlow()
+
+    /** 0 = current week, negative = weeks in the past. Never positive — an offset, not
+     *  an anchor date, so it self-corrects when [_today] refreshes across midnight rather
+     *  than pinning the grid to a date that's since become "the future." */
+    private val _weekOffset = MutableStateFlow(0)
+    val weekOffset: StateFlow<Int> = _weekOffset.asStateFlow()
+
+    val canGoBack: StateFlow<Boolean> = combine(_weekOffset, _state, _today) { offset, _, _ ->
+        offset > minWeekOffset()
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val canGoForward: StateFlow<Boolean> = _weekOffset
+        .map { it < 0 }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
+        _today.value = LocalDate.now()
+        clampWeekOffset()
+    }
+
+    // Deliberately NO onAppPause reset. "Relaunching lands on the current week" already
+    // happens for free — the ViewModel dies with the process — whereas onAppPause fires
+    // on every screen-off too (LightActivity.onPause). Resetting there meant a backfill
+    // interrupted by a screen timeout silently returned to the current week, and since
+    // the day strip is geometrically identical between weeks, the next tap would write to
+    // today's cell instead of the intended one.
+
+    override fun onBackPressed(): Boolean {
+        if (_weekOffset.value != 0) {
+            _weekOffset.value = 0
+            return true
+        }
+        return false
+    }
+
+    /** Week the record starts: earliest createdAt among ACTIVE habits only. Archived
+     *  habits are excluded even though their history is real, because they render in no
+     *  week — flooring on them made `‹` walk back through weeks whose grid was empty or
+     *  fully dimmed, and left both chevrons live on the "No habits yet" empty state. The
+     *  reachable range should promise exactly as much history as the screen can show, so
+     *  unarchiving a habit correctly extends the floor back again. */
+    private fun earliestWeekStart(): LocalDate =
+        (_state.value.habits.filter { it.archivedAt == null }.minOfOrNull { it.createdAt }
+            ?.let { LocalDate.ofEpochDay(it) } ?: _today.value)
+            .snappedToWeekStart(_state.value.weekStart)
+
+    private fun currentWeekStart(): LocalDate = _today.value.snappedToWeekStart(_state.value.weekStart)
+
+    private fun minWeekOffset(): Int =
+        (-ChronoUnit.WEEKS.between(earliestWeekStart(), currentWeekStart())).toInt().coerceAtMost(0)
+
+    private fun clampWeekOffset() {
+        _weekOffset.value = _weekOffset.value.coerceIn(minWeekOffset(), 0)
+    }
+
+    fun goToPreviousWeek() {
+        _weekOffset.value = (_weekOffset.value - 1).coerceAtLeast(minWeekOffset())
+    }
+
+    fun goToNextWeek() {
+        _weekOffset.value = (_weekOffset.value + 1).coerceAtMost(0)
+    }
+
     init {
         viewModelScope.launch(Dispatchers.IO) {
             val stored = runCatching {
@@ -229,6 +307,9 @@ class HabitTrackerViewModel(
      */
     fun toggleCompletion(habitId: String, epochDay: Long) {
         if (epochDay > LocalDate.now().toEpochDay()) return // defense in depth; UI shouldn't call this for future days
+        val habit = _state.value.habits.find { it.id == habitId } ?: return
+        val startWeekEpoch = LocalDate.ofEpochDay(habit.createdAt).snappedToWeekStart(_state.value.weekStart).toEpochDay()
+        if (epochDay < startWeekEpoch) return // defense in depth; UI shouldn't call this before the habit's creation week
         updateAndPersist { state ->
             val current = state.completions[habitId] ?: emptySet()
             val updated = if (epochDay in current) current - epochDay else current + epochDay
@@ -315,6 +396,7 @@ class HabitTrackerViewModel(
     private fun updateAndPersist(transform: (HabitState) -> HabitState) {
         val newState = transform(_state.value)
         _state.value = newState
+        clampWeekOffset()
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 dataStore.edit { prefs ->
@@ -341,6 +423,10 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
         val loaded by viewModel.loaded.collectAsState()
         val limitMessage by viewModel.limitMessage.collectAsState()
         val editMode by viewModel.editMode.collectAsState()
+        val today by viewModel.today.collectAsState()
+        val weekOffset by viewModel.weekOffset.collectAsState()
+        val canGoBack by viewModel.canGoBack.collectAsState()
+        val canGoForward by viewModel.canGoForward.collectAsState()
         val activeHabits = remember(state) { state.habits.filter { it.archivedAt == null }.sortedBy { it.order } }
 
         LightTheme(colors = themeColors) {
@@ -348,6 +434,10 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
                 habits = activeHabits,
                 completions = state.completions,
                 weekStart = state.weekStart,
+                today = today,
+                weekOffset = weekOffset,
+                canGoBack = canGoBack,
+                canGoForward = canGoForward,
                 loaded = loaded,
                 limitMessage = limitMessage,
                 editMode = editMode,
@@ -367,6 +457,8 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
                     navigateTo(screenFactory = { HabitDetailScreen(it, viewModel, habitId) })
                 },
                 onDismissLimitMessage = viewModel::dismissLimitMessage,
+                onPreviousWeek = viewModel::goToPreviousWeek,
+                onNextWeek = viewModel::goToNextWeek,
             )
         }
     }
@@ -377,6 +469,10 @@ private fun HabitTrackerScreen(
     habits: List<Habit>,
     completions: Map<String, Set<Long>>,
     weekStart: WeekStart,
+    today: LocalDate,
+    weekOffset: Int,
+    canGoBack: Boolean,
+    canGoForward: Boolean,
     loaded: Boolean,
     limitMessage: String?,
     editMode: Boolean,
@@ -386,16 +482,20 @@ private fun HabitTrackerScreen(
     onToggleEditMode: () -> Unit,
     onHabitRowTapped: (habitId: String) -> Unit,
     onDismissLimitMessage: () -> Unit,
+    onPreviousWeek: () -> Unit,
+    onNextWeek: () -> Unit,
 ) {
     val colors = LightThemeTokens.colors
 
-    val today = remember { LocalDate.now() }
     val todayEpoch = remember(today) { today.toEpochDay() }
-    val gridWeekStart = remember(today, weekStart) {
-        today.with(TemporalAdjusters.previousOrSame(weekStart.dayOfWeek))
+    val displayedWeekStart = remember(today, weekStart, weekOffset) {
+        today.snappedToWeekStart(weekStart).plusWeeks(weekOffset.toLong())
     }
-    val todayIndex = remember(today, gridWeekStart) {
-        ChronoUnit.DAYS.between(gridWeekStart, today).toInt()
+    // Only the current week (offset 0) can contain today; a past week's index range
+    // (7..13 relative to its own start) would otherwise happen to fall outside 0..6 and
+    // just look right by accident rather than by an explicit check.
+    val todayIndex = remember(weekOffset, displayedWeekStart, today) {
+        if (weekOffset == 0) ChronoUnit.DAYS.between(displayedWeekStart, today).toInt() else -1
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -405,21 +505,35 @@ private fun HabitTrackerScreen(
                 .background(colors.background),
         ) {
             LightTopBar(
-                leftButton = LightBarButton.LightIcon(
-                    icon = LightIcons.BACK,
-                    contentDescription = "Previous week",
-                    onClick = {},
-                ),
+                // Hidden rather than dimmed when unavailable: a spacer keeps the bar's
+                // geometry identical (see LightBarButtonView's null branch), and a chevron
+                // that's simply absent when there's nowhere to go means no control on this
+                // screen ever does nothing when tapped — the presence of `›` alone tells
+                // you you're not on the current week. Also off in edit mode, which doesn't
+                // navigate weeks at all.
+                leftButton = if (canGoBack && !editMode) {
+                    LightBarButton.LightIcon(
+                        icon = LightIcons.BACK,
+                        contentDescription = "Previous week",
+                        onClick = onPreviousWeek,
+                    )
+                } else {
+                    null
+                },
                 // Edit mode gets its own unambiguous label here instead of the week
                 // range — this is the first thing a glance at the screen lands on, and
                 // it doesn't depend on noticing the bottom bar's DONE label or the
                 // per-row borders below.
-                center = LightTopBarCenter.Text(if (editMode) "Editing" else weekRangeLabel(gridWeekStart)),
-                rightButton = LightBarButton.LightIcon(
-                    icon = LightIcons.ARROW_RIGHT,
-                    contentDescription = "Next week",
-                    onClick = {},
-                ),
+                center = LightTopBarCenter.Text(if (editMode) "Editing" else weekRangeLabel(displayedWeekStart, today)),
+                rightButton = if (canGoForward && !editMode) {
+                    LightBarButton.LightIcon(
+                        icon = LightIcons.ARROW_RIGHT,
+                        contentDescription = "Next week",
+                        onClick = onNextWeek,
+                    )
+                } else {
+                    null
+                },
             )
 
             if (!loaded) {
@@ -441,7 +555,7 @@ private fun HabitTrackerScreen(
                     // which reads as normal rather than broken.)
                     verticalArrangement = Arrangement.Top,
                 ) {
-                    DayLetterRow(weekStart = gridWeekStart, todayIndex = todayIndex)
+                    DayLetterRow(weekStart = displayedWeekStart, todayIndex = todayIndex)
 
                     Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
 
@@ -467,9 +581,10 @@ private fun HabitTrackerScreen(
                         HabitBlock(
                             habit = habit,
                             completedDays = completions[habit.id] ?: emptySet(),
-                            weekStart = gridWeekStart,
+                            weekStart = displayedWeekStart,
                             todayIndex = todayIndex,
                             todayEpoch = todayEpoch,
+                            startWeekEpoch = LocalDate.ofEpochDay(habit.createdAt).snappedToWeekStart(weekStart).toEpochDay(),
                             editMode = editMode,
                             onToggle = onToggle,
                             onRowTap = { onHabitRowTapped(habit.id) },
@@ -574,6 +689,7 @@ private fun HabitBlock(
     weekStart: LocalDate,
     todayIndex: Int,
     todayEpoch: Long,
+    startWeekEpoch: Long,
     editMode: Boolean,
     onToggle: (habitId: String, epochDay: Long) -> Unit,
     onRowTap: () -> Unit,
@@ -624,7 +740,7 @@ private fun HabitBlock(
             Row(modifier = Modifier.fillMaxWidth()) {
                 for (dayIndex in 0..6) {
                     val epochDay = weekStart.plusDays(dayIndex.toLong()).toEpochDay()
-                    val isFuture = epochDay > todayEpoch
+                    val inRange = epochDay in startWeekEpoch..todayEpoch
                     Box(
                         modifier = Modifier.weight(1f),
                         contentAlignment = Alignment.Center,
@@ -632,9 +748,9 @@ private fun HabitBlock(
                         DayCheckbox(
                             filled = epochDay in completedDays,
                             isToday = dayIndex == todayIndex,
-                            isFuture = isFuture,
+                            isFuture = !inRange,
                             editMode = editMode,
-                            onToggle = if (editMode || isFuture) null else { { onToggle(habit.id, epochDay) } },
+                            onToggle = if (editMode || !inRange) null else { { onToggle(habit.id, epochDay) } },
                         )
                     }
                 }
@@ -669,11 +785,13 @@ private fun HabitBlock(
  * when the box is filled (a same-color thicker border on a filled square would be
  * invisible against its own fill).
  *
- * Future days render with a secondary (dimmer) border and don't respond to taps —
- * clearly not-yet-available rather than just "unchecked." In edit mode every cell gets
- * that same muted treatment regardless of date (dimmer border, dimmer fill, no today
- * ring, no click) so the strip visibly reads as inert while editing rather than looking
- * like a still-live grid a tap might silently toggle.
+ * Days outside a habit's trackable range — after today, or before the week its habit was
+ * created in — render with a secondary (dimmer) border and don't respond to taps: clearly
+ * not-yet-available (future) or not-yet-existing (pre-creation) rather than just
+ * "unchecked." In edit mode every cell gets that same muted treatment regardless of date
+ * (dimmer border, dimmer fill, no today ring, no click) so the strip visibly reads as
+ * inert while editing rather than looking like a still-live grid a tap might silently
+ * toggle.
  */
 @Composable
 private fun DayCheckbox(filled: Boolean, isToday: Boolean, isFuture: Boolean, editMode: Boolean, onToggle: (() -> Unit)?) {
@@ -721,14 +839,23 @@ private fun DayCheckbox(filled: Boolean, isToday: Boolean, isFuture: Boolean, ed
 }
 
 private val MONTH_DAY_FORMAT = DateTimeFormatter.ofPattern("MMM d")
+private val MONTH_DAY_YEAR_FORMAT = DateTimeFormatter.ofPattern("MMM d yyyy")
 private val DAY_ONLY_FORMAT = DateTimeFormatter.ofPattern("d")
 
-private fun weekRangeLabel(weekStart: LocalDate): String {
+private fun weekRangeLabel(weekStart: LocalDate, today: LocalDate): String {
     val weekEnd = weekStart.plusDays(6)
     val endLabel = if (weekStart.month == weekEnd.month) {
         weekEnd.format(DAY_ONLY_FORMAT)
     } else {
         weekEnd.format(MONTH_DAY_FORMAT)
     }
-    return "${weekStart.format(MONTH_DAY_FORMAT)}–$endLabel"
+    // A week viewed months into the past can straddle a year boundary a plain "MMM d"
+    // start would silently misrepresent — spell out the year only when it differs from
+    // the year currently on screen elsewhere, not on every past week.
+    val startLabel = if (weekStart.year != today.year) {
+        weekStart.format(MONTH_DAY_YEAR_FORMAT)
+    } else {
+        weekStart.format(MONTH_DAY_FORMAT)
+    }
+    return "$startLabel–$endLabel"
 }
