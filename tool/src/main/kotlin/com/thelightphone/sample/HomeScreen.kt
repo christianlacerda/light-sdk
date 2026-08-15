@@ -142,6 +142,15 @@ private const val DAY_CELL_UNITS = 2.3f
 private const val CONTENT_SIDE_PADDING_UNITS = 2f
 
 /**
+ * Android's minimum touch target. Deliberately a raw dp rather than a grid unit: it is an
+ * ergonomic floor tied to fingertip size, so it must stay 48dp however the 27x31 design grid
+ * happens to map onto the device. A day cell's column is (27 - 2*2)/7 = 3.29u, about 50dp on
+ * an LP3, so this fits with roughly a dp of clearance either side and adjacent cells never
+ * overlap.
+ */
+private val MIN_TOUCH_TARGET = 48.dp
+
+/**
  * How far a day checkbox sits inside its column edge. The seven columns split the content
  * width evenly and each cell is centred in its column, so the last cell's right edge stops
  * short of the content's right edge by this much. Anything meant to line up with the strip —
@@ -802,6 +811,9 @@ private fun DayCheckbox(filled: Boolean, isToday: Boolean, isFuture: Boolean, ed
     val colors = LightThemeTokens.colors
     val cellSize = DAY_CELL_UNITS.gridUnitsAsDp()
     val haloSize = cellSize + 10.dp
+    // Hit area only. The halo stays at its drawn size so raising the target doesn't inflate
+    // the today ring along with it — 45dp of drawn halo, 48dp of tappable box around it.
+    val touchSize = maxOf(haloSize, MIN_TOUCH_TARGET)
     val dimmed = isFuture || editMode
     val borderColor = if (dimmed) colors.contentSecondary else colors.content
     val fillColor = when {
@@ -813,7 +825,7 @@ private fun DayCheckbox(filled: Boolean, isToday: Boolean, isFuture: Boolean, ed
 
     Box(
         modifier = Modifier
-            .size(haloSize)
+            .size(touchSize)
             .let { base ->
                 if (onToggle != null) {
                     base.lightClickable(
