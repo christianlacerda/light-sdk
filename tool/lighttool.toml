@@ -1,10 +1,13 @@
 [tool]
-id = "com.thelightphone.app"
-label = "Habits"
+id = "com.christianlacerda.ponto"
+label = "Ponto"
 versionCode = 1
 versionName = "1.0.0"
 permissions = []
 capabilities = []
+# No orientation lock. "portrait" letterboxes the tool on the LP3's near-square
+# 1080x1240 display — Android applies compatibility letterboxing to fixed-orientation
+# activities there, leaving bars down both sides. The device doesn't rotate anyway.
 # change if you run this on an LP3!
 # serverPackage = "com.lightos"
 serverPackage = "com.thelightphone.sdk.emulator"
