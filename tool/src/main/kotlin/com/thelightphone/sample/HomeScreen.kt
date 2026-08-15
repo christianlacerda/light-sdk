@@ -224,13 +224,11 @@ class HabitTrackerViewModel(
     // the day strip is geometrically identical between weeks, the next tap would write to
     // today's cell instead of the intended one.
 
-    override fun onBackPressed(): Boolean {
-        if (_weekOffset.value != 0) {
-            _weekOffset.value = 0
-            return true
-        }
-        return false
-    }
+    // No onBackPressed override. LightViewModel.onBackPressed() is unreachable for a root
+    // screen: the back dispatcher calls LightActivity.goBack() directly, which pops the
+    // stack and finishes, and only LightScreen.goBack(result) consults the view model —
+    // nothing calls that here. An override would read as working week-reset behaviour while
+    // doing nothing. Intercepting back would need an SDK change, which this fork doesn't make.
 
     /** Week the record starts: earliest createdAt among ACTIVE habits only. Archived
      *  habits are excluded even though their history is real, because they render in no
