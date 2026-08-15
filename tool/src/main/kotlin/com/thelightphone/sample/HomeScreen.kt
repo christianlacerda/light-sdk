@@ -119,7 +119,7 @@ data class HabitState(
 /** The Sunday/Monday (per [WeekStart]) on or before this date — the shared "which week
  *  is this day in" formula used for the grid header, offset clamping, and creation-week
  *  gating, so those three don't drift against each other. */
-private fun LocalDate.snappedToWeekStart(weekStart: WeekStart): LocalDate =
+internal fun LocalDate.snappedToWeekStart(weekStart: WeekStart): LocalDate =
     with(TemporalAdjusters.previousOrSame(weekStart.dayOfWeek))
 
 private fun dayLetterFor(dayOfWeek: DayOfWeek): String = when (dayOfWeek) {
@@ -135,8 +135,10 @@ private fun dayLetterFor(dayOfWeek: DayOfWeek): String = when (dayOfWeek) {
 /** Hard cap on the number of *active* habits that can exist at once. Archived habits don't count. */
 private const val MAX_HABITS = 3
 
-/** Width of a day checkbox, in grid units. */
-private const val DAY_CELL_UNITS = 2.3f
+/** Width of a day checkbox, in grid units. Also the width of a month bar in
+ *  [HabitReportScreen], so the report's columns read as the same instrument as the
+ *  week strip rather than a chart bolted on. */
+internal const val DAY_CELL_UNITS = 2.3f
 
 /** Grid units of horizontal padding either side of the grid content (see [HabitTrackerScreen]). */
 private const val CONTENT_SIDE_PADDING_UNITS = 2f
@@ -391,6 +393,13 @@ class HabitTrackerViewModel(
     }
 
     fun completionCount(habitId: String): Int = _state.value.completions[habitId]?.size ?: 0
+
+    /** Re-reads the clock. [onScreenShow] covers the home screen, but a [SimpleLightScreen]
+     *  sharing this view model (settings, report) never triggers it, so a session left open
+     *  across midnight would draw those screens against yesterday's date. */
+    fun refreshToday() {
+        _today.value = LocalDate.now()
+    }
 
     private fun nextOrder(): Int = (_state.value.habits.maxOfOrNull { it.order } ?: -1) + 1
 
