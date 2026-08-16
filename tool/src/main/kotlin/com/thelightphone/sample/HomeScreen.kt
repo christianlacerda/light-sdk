@@ -665,19 +665,28 @@ private fun HabitTrackerScreen(
 
                         Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
 
-                        // Spread rather than stacked from the top. Capped at MAX_HABITS and
-                        // with no archived rows here, this list can't overflow, so top-
-                        // anchoring it just pooled every spare pixel into one dead band above
-                        // the bottom bar. The letters stay put above (they head the whole
-                        // grid, not the first row), so only the habits move.
+                        // Stacked from the top, with the leftover collecting at the bottom.
+                        //
+                        // Spreading the habits over the full height (Arrangement.SpaceEvenly)
+                        // has been tried twice and fails the same way both times: it looks
+                        // even at three habits, which is the maximum and not the common case,
+                        // and falls apart below that. At two it opens a chasm between the
+                        // rows; at one it strands a single habit in the middle of an empty
+                        // screen. The spare space at the bottom of a three-habit screen is
+                        // not dead space to reclaim — it's the room the third habit occupies
+                        // when the list is full, and leaving it empty is what keeps a row in
+                        // the same place whether you track one habit or three.
                         Column(
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth()
                                 .padding(horizontal = CONTENT_SIDE_PADDING_UNITS.gridUnitsAsDp()),
-                            verticalArrangement = Arrangement.SpaceEvenly,
+                            verticalArrangement = Arrangement.Top,
                         ) {
-                            habits.forEach { habit ->
+                            habits.forEachIndexed { index, habit ->
+                                // Explicit again: the spread was supplying these gaps for
+                                // free, and top-anchoring stacks the rows flush without them.
+                                if (index > 0) HabitSeparator(editMode = false)
                                 HabitBlock(
                                     habit = habit,
                                     completedDays = completions[habit.id] ?: emptySet(),
