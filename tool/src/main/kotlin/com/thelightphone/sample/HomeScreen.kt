@@ -438,7 +438,12 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
         val canGoBack by viewModel.canGoBack.collectAsState()
         val canGoForward by viewModel.canGoForward.collectAsState()
         val activeHabits = remember(state) { state.habits.filter { it.archivedAt == null }.sortedBy { it.order } }
-        val archivedHabits = remember(state) { state.habits.filter { it.archivedAt != null }.sortedBy { it.order } }
+        // Most recently archived first, so the one you just put away — overwhelmingly the
+        // one you'd want back — is the first archived row under the active list.
+        val archivedHabits = remember(state) {
+            state.habits.filter { it.archivedAt != null }
+                .sortedWith(compareByDescending<Habit> { it.archivedAt }.thenByDescending { it.order })
+        }
         var pendingDelete by remember { mutableStateOf<Habit?>(null) }
 
         LightTheme(colors = themeColors) {
@@ -596,78 +601,93 @@ private fun HabitTrackerScreen(
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxWidth()
-                        .padding(horizontal = CONTENT_SIDE_PADDING_UNITS.gridUnitsAsDp()),
-                    // Fixed top-anchored rhythm: the day-letter row sits a constant gap
-                    // below the top bar, and habit blocks stack below it with the same
-                    // gap. (Previously Arrangement.SpaceEvenly redistributed the leftover
-                    // vertical space across every gap, which looked fine at 3 habits but
-                    // left the day-letter row floating with ~300px of dead space above it
-                    // at 1-2 habits — any unused space now just collects at the bottom,
-                    // which reads as normal rather than broken.)
-                    verticalArrangement = Arrangement.Top,
+                        .fillMaxWidth(),
                 ) {
-                    // Same 1.2u used below the letters, so the row reads as its own band
-                    // rather than as part of the top bar it was previously flush against.
                     Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
 
-                    // No day letters while editing. They head seven day columns, and edit
-                    // mode draws no columns — fading them still left a header labelling
-                    // nothing, and the row it occupied is worth more as space for the list,
-                    // which is the longest it ever gets in this mode. Habits do shift up on
-                    // entering edit mode as a result; that's the trade, and edit mode is
-                    // visibly its own mode rather than the grid with extras.
-                    if (!editMode) {
-                        DayLetterRow(weekStart = displayedWeekStart, todayIndex = todayIndex)
+                    if (editMode) {
+                        // The scroll bar sits in a reserved gutter at the very edge of the
+                        // screen, so this spans the full width and the content is inset
+                        // from the inside. The gutter is the same 2u as the side padding,
+                        // so it doubles as the right margin and rows keep exactly the width
+                        // they have at rest — the bar just occupies the margin they'd have
+                        // left empty.
+                        LightScrollView(
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            scrollBarPosition = LightScrollBarPosition.Outside,
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = CONTENT_SIDE_PADDING_UNITS.gridUnitsAsDp()),
+                            ) {
+                                // One list, active first. Archived habits carry no separate
+                                // heading: a dimmed name over UNARCHIVE/DELETE already says
+                                // what they are, and a label set like a habit name only read
+                                // as one more habit.
+                                habits.forEachIndexed { index, habit ->
+                                    if (index > 0) HabitSeparator(editMode = true)
+                                    HabitBlock(
+                                        habit = habit,
+                                        completedDays = completions[habit.id] ?: emptySet(),
+                                        weekStart = displayedWeekStart,
+                                        todayIndex = todayIndex,
+                                        todayEpoch = todayEpoch,
+                                        startWeekEpoch = LocalDate.ofEpochDay(habit.createdAt).snappedToWeekStart(weekStart).toEpochDay(),
+                                        editMode = true,
+                                        onToggle = onToggle,
+                                        onRename = { onRenameHabit(habit) },
+                                        onArchive = { onArchiveHabit(habit) },
+                                        onDelete = { onDeleteHabit(habit) },
+                                    )
+                                }
+
+                                archivedHabits.forEachIndexed { index, habit ->
+                                    if (index > 0 || habits.isNotEmpty()) {
+                                        HabitSeparator(editMode = true)
+                                    }
+                                    ArchivedHabitBlock(
+                                        habit = habit,
+                                        onUnarchive = { onUnarchiveHabit(habit) },
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        DayLetterRow(
+                            weekStart = displayedWeekStart,
+                            todayIndex = todayIndex,
+                            modifier = Modifier.padding(
+                                horizontal = CONTENT_SIDE_PADDING_UNITS.gridUnitsAsDp(),
+                            ),
+                        )
 
                         Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
-                    }
 
-                    // Editing reserves a gutter for the scroll bar so it never crosses a row
-                    // separator; resting overlays instead. The gutter is charged whether or
-                    // not a bar is showing, and at rest that would narrow the day strip,
-                    // dropping each column from 3.29u to 3.0u and taking the cells under the
-                    // 48dp target. Resting caps at MAX_HABITS and can't overflow, so it never
-                    // draws a bar to overlap anything anyway.
-                    LightScrollView(
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                        scrollBarPosition = if (editMode) {
-                            LightScrollBarPosition.Outside
-                        } else {
-                            LightScrollBarPosition.Inside
-                        },
-                    ) {
-                        habits.forEachIndexed { index, habit ->
-                            if (index > 0) {
-                                HabitSeparator(editMode = editMode)
-                            }
-                            HabitBlock(
-                                habit = habit,
-                                completedDays = completions[habit.id] ?: emptySet(),
-                                weekStart = displayedWeekStart,
-                                todayIndex = todayIndex,
-                                todayEpoch = todayEpoch,
-                                startWeekEpoch = LocalDate.ofEpochDay(habit.createdAt).snappedToWeekStart(weekStart).toEpochDay(),
-                                editMode = editMode,
-                                onToggle = onToggle,
-                                onRename = { onRenameHabit(habit) },
-                                onArchive = { onArchiveHabit(habit) },
-                                onDelete = { onDeleteHabit(habit) },
-                            )
-                        }
-
-                        // Archived habits appear only while editing, below the active ones.
-                        // They're habit management, which is what edit mode is for, and they
-                        // have no place on the resting grid — an archived habit has no week
-                        // to show.
-                        if (editMode && archivedHabits.isNotEmpty()) {
-                            ArchivedSectionHeader(afterHabits = habits.isNotEmpty())
-
-                            archivedHabits.forEachIndexed { index, habit ->
-                                if (index > 0) HabitSeparator(editMode = true)
-                                ArchivedHabitBlock(
+                        // Spread rather than stacked from the top. Capped at MAX_HABITS and
+                        // with no archived rows here, this list can't overflow, so top-
+                        // anchoring it just pooled every spare pixel into one dead band above
+                        // the bottom bar. The letters stay put above (they head the whole
+                        // grid, not the first row), so only the habits move.
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .padding(horizontal = CONTENT_SIDE_PADDING_UNITS.gridUnitsAsDp()),
+                            verticalArrangement = Arrangement.SpaceEvenly,
+                        ) {
+                            habits.forEach { habit ->
+                                HabitBlock(
                                     habit = habit,
-                                    onUnarchive = { onUnarchiveHabit(habit) },
+                                    completedDays = completions[habit.id] ?: emptySet(),
+                                    weekStart = displayedWeekStart,
+                                    todayIndex = todayIndex,
+                                    todayEpoch = todayEpoch,
+                                    startWeekEpoch = LocalDate.ofEpochDay(habit.createdAt).snappedToWeekStart(weekStart).toEpochDay(),
+                                    editMode = false,
+                                    onToggle = onToggle,
+                                    onRename = { onRenameHabit(habit) },
+                                    onArchive = { onArchiveHabit(habit) },
                                     onDelete = { onDeleteHabit(habit) },
                                 )
                             }
@@ -882,54 +902,21 @@ private fun HabitSeparator(editMode: Boolean) {
 }
 
 /**
- * Marks where the active habits end and the archived ones begin.
- *
- * Centred, which is the whole point. Left-aligned in [LightTextVariant.Detail] and
- * `lighten`-ed it was drawn *identically* to the archived habit name two lines below it —
- * same size, same weight, same dimming, same x — so it read as one more habit. Nothing
- * else in the list is centred, so moving it off the left margin stops it being a name.
- *
- * It also gets more room than [HabitSeparator] gives between two habits: the break between
- * active and archived is a bigger one than the break between two rows, and space is what
- * says so. Same 1dp rule as everywhere else rather than a heavier one — the label and the
- * gaps carry it.
- */
-@Composable
-private fun ArchivedSectionHeader(afterHabits: Boolean) {
-    if (afterHabits) {
-        Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(LightThemeTokens.colors.contentSecondary),
-        )
-    }
-
-    Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
-
-    LightText(
-        text = "ARCHIVED",
-        variant = LightTextVariant.Detail,
-        lighten = true,
-        align = TextAlign.Center,
-        modifier = Modifier.fillMaxWidth(),
-    )
-
-    Spacer(modifier = Modifier.height(1f.verticalGridUnitsAsDp()))
-}
-
-/**
  * An archived habit, listed below the active ones while editing.
  *
- * Same shape as an active row in edit mode — name over a right-clustered action row — so
- * the two read as one list rather than two widgets. The name is dimmed, which is the only
- * thing distinguishing an archived habit visually, and the actions differ: an archived
- * habit can come back or be erased, but there's nothing to rename on something you aren't
- * tracking.
+ * Same shape as an active row — name over a right-clustered action row — so the list reads
+ * as one list. What separates the two is the row itself: a dimmed name and a single action
+ * against a full-strength name and three. That contrast is the whole signal, which is why
+ * the section carries no heading; a label set like a habit name only read as one more
+ * habit.
+ *
+ * UNARCHIVE alone. There's nothing to rename on something you aren't tracking, nothing to
+ * archive on something already archived, and deleting outright is deliberately not offered
+ * here — bring it back first, then delete it from its active row, where the confirmation
+ * can tell you how many days go with it.
  */
 @Composable
-private fun ArchivedHabitBlock(habit: Habit, onUnarchive: () -> Unit, onDelete: () -> Unit) {
+private fun ArchivedHabitBlock(habit: Habit, onUnarchive: () -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {
         LightText(
             text = habit.name,
@@ -944,7 +931,6 @@ private fun ArchivedHabitBlock(habit: Habit, onUnarchive: () -> Unit, onDelete: 
 
         HabitActionRow(
             HabitActionSpec("UNARCHIVE", "Unarchive ${habit.name}", onUnarchive),
-            HabitActionSpec("DELETE", "Delete ${habit.name}", onDelete),
         )
     }
 }
