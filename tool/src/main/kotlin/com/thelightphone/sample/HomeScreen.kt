@@ -649,6 +649,7 @@ private fun HabitTrackerScreen(
                                     ArchivedHabitBlock(
                                         habit = habit,
                                         onUnarchive = { onUnarchiveHabit(habit) },
+                                        onDelete = { onDeleteHabit(habit) },
                                     )
                                 }
                             }
@@ -905,18 +906,18 @@ private fun HabitSeparator(editMode: Boolean) {
  * An archived habit, listed below the active ones while editing.
  *
  * Same shape as an active row — name over a right-clustered action row — so the list reads
- * as one list. What separates the two is the row itself: a dimmed name and a single action
- * against a full-strength name and three. That contrast is the whole signal, which is why
- * the section carries no heading; a label set like a habit name only read as one more
- * habit.
+ * as one list. What separates the two is the row itself: a dimmed name over UNARCHIVE
+ * against a full-strength name over RENAME/ARCHIVE. That contrast is the whole signal,
+ * which is why the section carries no heading; a label set like a habit name only read as
+ * one more habit.
  *
- * UNARCHIVE alone. There's nothing to rename on something you aren't tracking, nothing to
- * archive on something already archived, and deleting outright is deliberately not offered
- * here — bring it back first, then delete it from its active row, where the confirmation
- * can tell you how many days go with it.
+ * Two actions, not three: there's nothing to rename on something you aren't tracking, and
+ * nothing to archive on something already archived. DELETE stays rightmost, the same place
+ * it sits on an active row, so the destructive action is in one position throughout the
+ * list rather than moving depending on which kind of row you're on.
  */
 @Composable
-private fun ArchivedHabitBlock(habit: Habit, onUnarchive: () -> Unit) {
+private fun ArchivedHabitBlock(habit: Habit, onUnarchive: () -> Unit, onDelete: () -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {
         LightText(
             text = habit.name,
@@ -931,6 +932,7 @@ private fun ArchivedHabitBlock(habit: Habit, onUnarchive: () -> Unit) {
 
         HabitActionRow(
             HabitActionSpec("UNARCHIVE", "Unarchive ${habit.name}", onUnarchive),
+            HabitActionSpec("DELETE", "Delete ${habit.name}", onDelete),
         )
     }
 }
