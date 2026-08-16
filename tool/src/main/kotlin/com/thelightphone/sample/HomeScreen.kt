@@ -610,6 +610,7 @@ private fun HabitTrackerScreen(
                     DayLetterRow(
                         weekStart = displayedWeekStart,
                         todayIndex = todayIndex,
+                        markToday = !editMode,
                         // Faded, not removed, while editing. The letters head seven day
                         // columns that edit mode replaces, so at full strength they'd be
                         // labelling nothing — but keeping them faintly visible holds the
@@ -712,13 +713,25 @@ private fun EmptyHabitsContent(modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * @param markToday whether today's letter is picked out from the rest. Off in edit mode:
+ *   the underline points down at today's cell, and edit mode doesn't draw the cells, so
+ *   marking a column that isn't there is the one part of the faded header that actively
+ *   misleads rather than just lingering.
+ */
 @Composable
-private fun DayLetterRow(weekStart: LocalDate, todayIndex: Int, modifier: Modifier = Modifier) {
+private fun DayLetterRow(
+    weekStart: LocalDate,
+    todayIndex: Int,
+    markToday: Boolean = true,
+    modifier: Modifier = Modifier,
+) {
     val letters = remember(weekStart) {
         (0..6).map { dayLetterFor(weekStart.plusDays(it.toLong()).dayOfWeek) }
     }
     Row(modifier = modifier.fillMaxWidth()) {
         letters.forEachIndexed { index, letter ->
+            val isToday = markToday && index == todayIndex
             Box(
                 modifier = Modifier.weight(1f),
                 contentAlignment = Alignment.Center,
@@ -727,8 +740,8 @@ private fun DayLetterRow(weekStart: LocalDate, todayIndex: Int, modifier: Modifi
                     text = letter,
                     variant = LightTextVariant.Detail,
                     align = TextAlign.Center,
-                    lighten = index != todayIndex,
-                    underline = index == todayIndex,
+                    lighten = !isToday,
+                    underline = isToday,
                 )
             }
         }
