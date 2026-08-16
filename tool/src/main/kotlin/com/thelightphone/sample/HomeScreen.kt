@@ -155,6 +155,14 @@ private const val CONTENT_SIDE_PADDING_UNITS = 2f
  */
 private val MIN_TOUCH_TARGET = 48.dp
 
+/**
+ * How far a pre-creation day's border fades below `contentSecondary`, which future days
+ * already use. Alpha rather than a third palette colour: the theme has exactly two content
+ * tones, and fading the dimmer of them lands a step further back in both light and dark
+ * without inventing a colour that would have to be defined twice.
+ */
+private const val BEFORE_HABIT_BORDER_ALPHA = 0.45f
+
 private const val ADD_LIMIT_MESSAGE = "3 habits is the limit — archive one to add another."
 private const val RESTORE_LIMIT_MESSAGE = "3 habits is the limit — archive one to restore this."
 
@@ -1033,18 +1041,16 @@ private enum class DayCellState {
  * when the box is filled (a same-color thicker border on a filled square would be
  * invisible against its own fill).
  *
- * The three states are three different drawings, which is the point. A [DayCellState.FUTURE]
- * day keeps its box in a dimmer border — it's a real day that will come round. A
- * [DayCellState.BEFORE_HABIT] day draws *nothing*: it holds its space so the columns stay
- * aligned, but there's no box, so a habit's row visibly begins where the habit does.
+ * The three states are three weights of the same square, not three different things. A
+ * [DayCellState.FUTURE] day is dimmed to `contentSecondary`; a [DayCellState.BEFORE_HABIT]
+ * day is fainter still, [BEFORE_HABIT_BORDER_ALPHA] of that. Drawing those two identically
+ * is what made a newly added habit look broken — page back a week and its untappable cells
+ * were indistinguishable from unreachable future ones, with nothing saying why.
  *
- * Drawing those two the same way is what made a newly added habit look broken — page back a
- * week and its untappable cells were indistinguishable from unreachable future ones, with
- * nothing saying why. An empty stretch of row says "this habit wasn't here yet" without a
- * word, and can't be mistaken for seven days you failed to tick. Week-boundary snapping in
- * [HabitBlock] means a blank stretch is always a whole week, never a ragged part of one, and
- * the week chevrons stop at the earliest active habit's creation week, so a row that's blank
- * end to end always sits beside one that isn't.
+ * Omitting the pre-creation square altogether was tried and reads as a rendering failure
+ * rather than a statement: a row that simply stops has no way to say whether it means "not
+ * applicable" or "failed to draw". Keeping the square and receding it says the days are
+ * there and not yours to fill, which is the actual situation.
  *
  * Edit mode needs no muted variant of this: the strip isn't drawn at all while editing
  * (see [HabitBlock]), so there is no inert grid on screen for a tap to look live against.
@@ -1078,10 +1084,6 @@ private fun DayCheckbox(
             },
         contentAlignment = Alignment.Center,
     ) {
-        // Nothing drawn, but the box still occupies its column so the strip doesn't
-        // reflow and the days below the letters stay in their places.
-        if (state == DayCellState.BEFORE_HABIT) return@Box
-
         if (isToday) {
             Box(
                 modifier = Modifier
@@ -1094,12 +1096,15 @@ private fun DayCheckbox(
                 .size(cellSize)
                 .border(
                     width = 1.dp,
-                    color = if (state == DayCellState.FUTURE) {
-                        colors.contentSecondary
-                    } else {
-                        colors.content
+                    color = when (state) {
+                        DayCellState.TRACKABLE -> colors.content
+                        DayCellState.FUTURE -> colors.contentSecondary
+                        DayCellState.BEFORE_HABIT ->
+                            colors.contentSecondary.copy(alpha = BEFORE_HABIT_BORDER_ALPHA)
                     },
                 )
+                // A pre-creation day is never filled: toggling is gated to TRACKABLE, so
+                // there is no path to a completion before the habit's creation week.
                 .background(if (filled) colors.content else Color.Transparent),
         )
     }
