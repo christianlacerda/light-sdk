@@ -485,6 +485,9 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
                     onSettingsTapped = {
                         navigateTo(screenFactory = { HabitSettingsScreen(it, viewModel) })
                     },
+                    onReportTapped = {
+                        navigateTo(screenFactory = { HabitReportScreen(it, viewModel) })
+                    },
                     onToggle = viewModel::toggleCompletion,
                     onToggleEditMode = viewModel::toggleEditMode,
                     onRenameHabit = { habit ->
@@ -524,6 +527,7 @@ private fun HabitTrackerScreen(
     editMode: Boolean,
     onAddTapped: () -> Unit,
     onSettingsTapped: () -> Unit,
+    onReportTapped: () -> Unit,
     onToggle: (habitId: String, epochDay: Long) -> Unit,
     onToggleEditMode: () -> Unit,
     onRenameHabit: (Habit) -> Unit,
@@ -658,6 +662,21 @@ private fun HabitTrackerScreen(
                 }
             }
 
+            // Icon + text + icon in 3 slots hits LightBottomBar's mixed layout
+            // (SpaceBetween) — matches the Notes tool idiom. This is the ceiling: a text
+            // item caps the bar at 3 items, so there's no room for a 4th. The gear holds
+            // the left slot in both modes so only the two changing controls move.
+            //
+            // What sits in the other two slots is a bet on frequency at rest. Ticking a
+            // day needs no button at all, so past the grid the recurring thing is looking
+            // at the trend; adding and editing are setup, done once and then rarely.
+            // Report therefore takes the centre, and editing steps back to a pencil.
+            //
+            // `+` only appears while editing. Adding and renaming/archiving/deleting are
+            // one job — managing habits — and splitting them across two slots left `+`
+            // on the resting screen doing nothing: at MAX_HABITS `requestAdd` can only
+            // raise a modal explaining itself. Inside edit mode that modal at least lands
+            // somewhere it can be acted on, with ARCHIVE already on every row.
             LightBottomBar(
                 items = listOf(
                     LightBarButton.LightIcon(
@@ -665,18 +684,24 @@ private fun HabitTrackerScreen(
                         contentDescription = "Settings",
                         onClick = onSettingsTapped,
                     ),
-                    // Icon + text + icon in 3 slots hits LightBottomBar's mixed layout
-                    // (SpaceBetween) — matches the Notes tool idiom. This is the ceiling:
-                    // a text item caps the bar at 3 items, so there's no room for a 4th.
-                    LightBarButton.Text(
-                        text = if (editMode) "DONE" else "EDIT",
-                        onClick = onToggleEditMode,
-                    ),
-                    LightBarButton.LightIcon(
-                        icon = LightIcons.ADD,
-                        contentDescription = "Add habit",
-                        onClick = onAddTapped,
-                    ),
+                    if (editMode) {
+                        LightBarButton.Text(text = "DONE", onClick = onToggleEditMode)
+                    } else {
+                        LightBarButton.Text(text = "REPORT", onClick = onReportTapped)
+                    },
+                    if (editMode) {
+                        LightBarButton.LightIcon(
+                            icon = LightIcons.ADD,
+                            contentDescription = "Add habit",
+                            onClick = onAddTapped,
+                        )
+                    } else {
+                        LightBarButton.LightIcon(
+                            icon = LightIcons.PENCIL,
+                            contentDescription = "Edit habits",
+                            onClick = onToggleEditMode,
+                        )
+                    },
                 ),
             )
         }

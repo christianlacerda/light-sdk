@@ -79,9 +79,6 @@ class HabitSettingsScreen(
                         weekStart = state.weekStart,
                         archivedHabits = archivedHabits,
                         onBack = { goBack() },
-                        onOpenReport = {
-                            navigateTo(screenFactory = { HabitReportScreen(it, viewModel) })
-                        },
                         onSetWeekStart = viewModel::setWeekStart,
                         onUnarchive = { habitId -> viewModel.unarchiveHabit(habitId) },
                         onRequestDelete = { habit ->
@@ -112,7 +109,6 @@ private fun HabitSettingsContent(
     weekStart: WeekStart,
     archivedHabits: List<Habit>,
     onBack: () -> Unit,
-    onOpenReport: () -> Unit,
     onSetWeekStart: (WeekStart) -> Unit,
     onUnarchive: (String) -> Unit,
     onRequestDelete: (Habit) -> Unit,
@@ -134,11 +130,6 @@ private fun HabitSettingsContent(
                 .fillMaxWidth()
                 .padding(start = 1f.gridUnitsAsDp()),
         ) {
-            SectionHeader(text = "REPORT")
-            NavigationRow(label = "Monthly trend", onClick = onOpenReport)
-
-            Spacer(modifier = Modifier.height(1.5f.gridUnitsAsDp()))
-
             SectionHeader(text = "WEEK STARTS ON")
             WeekStartRow(
                 label = "Sunday",
@@ -177,23 +168,6 @@ private fun SectionHeader(text: String) {
         lighten = true,
         modifier = Modifier.padding(bottom = 0.5f.gridUnitsAsDp()),
     )
-}
-
-/** A row that opens another screen, marked with the same `›` the home grid uses for a row
- *  that leads somewhere. Full-width tap target rather than just the label, so the whole row
- *  is reachable at the 48dp minimum. */
-@Composable
-private fun NavigationRow(label: String, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .lightClickable(onClick = onClick)
-            .padding(vertical = 0.75f.gridUnitsAsDp(), horizontal = 0.25f.gridUnitsAsDp()),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        LightText(text = label, variant = LightTextVariant.Copy, modifier = Modifier.weight(1f))
-        LightIcon(icon = LightIcons.ARROW_RIGHT, size = 1.6f)
-    }
 }
 
 @Composable
