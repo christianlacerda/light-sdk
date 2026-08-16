@@ -19,15 +19,16 @@ import com.thelightphone.sdk.ui.gridUnitsAsDp
 
 /**
  * A plain "are you sure?" gets tapped through reflexively. Naming what's actually lost
- * makes the confirmation informative instead of ceremonial — so this always states the
- * number of days that would be erased.
+ * makes the confirmation informative instead of ceremonial — so whenever there is history
+ * to lose, this states how many days go with it.
  *
- * Only meant to be called when [completionCount] > 0. A habit with zero completions has
- * nothing to lose, so callers should skip this entirely and delete immediately instead
- * of asking a question with an obvious answer (see [HabitDetailScreen] and
- * [HabitSettingsScreen] delete call sites).
+ * A habit with no completions loses nothing, and padding the question with "0 days will be
+ * erased" would only make it read like boilerplate. It still asks, though: on the grid,
+ * DELETE sits one tap away from RENAME, close enough that a mis-tap on a habit you just
+ * created and mistyped is a realistic way to lose it on a device with no undo.
  */
 internal fun deleteConfirmationMessage(habitName: String, completionCount: Int): String {
+    if (completionCount == 0) return "Delete “$habitName”?"
     val days = if (completionCount == 1) "day" else "days"
     return "Delete “$habitName”? $completionCount $days will be erased."
 }
@@ -37,8 +38,8 @@ internal fun deleteConfirmationMessage(habitName: String, completionCount: Int):
  * two-choice delete confirmation — a fullscreen modal only has room for a message and a
  * single close button, and this needs two: cancel and confirm. Swapping the screen's own
  * content is the simplest way to get a two-choice prompt out of the primitives available.
- * Shared by [HabitDetailScreen] (active habits) and [HabitSettingsScreen] (archived habits)
- * so both use one message format and one look.
+ * Shared by [HomeScreen] (active habits, deleted from the grid's edit mode) and
+ * [HabitSettingsScreen] (archived habits) so both use one message format and one look.
  */
 @Composable
 internal fun HabitDeleteConfirmationContent(message: String, onCancel: () -> Unit, onConfirm: () -> Unit) {

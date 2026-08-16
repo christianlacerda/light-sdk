@@ -6,7 +6,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -15,9 +17,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -35,8 +40,6 @@ import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightFullscreenModal
-import com.thelightphone.sdk.ui.LightGrid
-import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -152,15 +155,6 @@ private const val CONTENT_SIDE_PADDING_UNITS = 2f
  */
 private val MIN_TOUCH_TARGET = 48.dp
 
-/**
- * How far a day checkbox sits inside its column edge. The seven columns split the content
- * width evenly and each cell is centred in its column, so the last cell's right edge stops
- * short of the content's right edge by this much. Anything meant to line up with the strip —
- * the edit pencil — needs the same inset, or it visibly overhangs.
- */
-private const val DAY_CELL_EDGE_INSET_UNITS =
-    ((LightGrid.WIDTH - 2 * CONTENT_SIDE_PADDING_UNITS) / 7f - DAY_CELL_UNITS) / 2f
-
 private const val ADD_LIMIT_MESSAGE = "3 habits is the limit — archive one to add another."
 private const val RESTORE_LIMIT_MESSAGE = "3 habits is the limit — archive one to restore this."
 
@@ -184,8 +178,8 @@ class HabitTrackerViewModel(
     val limitMessage: StateFlow<String?> = _limitMessage.asStateFlow()
 
     /** Whether the grid is in edit mode (entered via the bottom bar's EDIT/DONE toggle).
-     *  In edit mode, day cells stop responding to taps and a habit row becomes a single
-     *  tap target that opens [HabitDetailScreen]. */
+     *  In edit mode each habit's day strip is replaced in place by its three management
+     *  actions — Rename, Archive, Delete — so managing a habit costs no extra screen. */
     private val _editMode = MutableStateFlow(false)
     val editMode: StateFlow<Boolean> = _editMode.asStateFlow()
 
@@ -373,7 +367,7 @@ class HabitTrackerViewModel(
     }
 
     /** Renaming has no effect on history or archive state — it's a pure label change,
-     *  reachable from [HabitDetailScreen]'s Rename action. No-op on a blank name. */
+     *  reachable from a habit row's Rename action in edit mode. No-op on a blank name. */
     fun renameHabit(habitId: String, newName: String) {
         val trimmed = newName.trim()
         if (trimmed.isEmpty()) return
@@ -444,38 +438,69 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
         val canGoBack by viewModel.canGoBack.collectAsState()
         val canGoForward by viewModel.canGoForward.collectAsState()
         val activeHabits = remember(state) { state.habits.filter { it.archivedAt == null }.sortedBy { it.order } }
+        var pendingDelete by remember { mutableStateOf<Habit?>(null) }
 
         LightTheme(colors = themeColors) {
-            HabitTrackerScreen(
-                habits = activeHabits,
-                completions = state.completions,
-                weekStart = state.weekStart,
-                today = today,
-                weekOffset = weekOffset,
-                canGoBack = canGoBack,
-                canGoForward = canGoForward,
-                loaded = loaded,
-                limitMessage = limitMessage,
-                editMode = editMode,
-                onAddTapped = {
-                    if (viewModel.requestAdd()) {
-                        navigateTo(screenFactory = { AddHabitScreen(it) }) { name ->
-                            viewModel.addHabit(name)
+            val toDelete = pendingDelete
+            if (toDelete != null) {
+                // Delete now sits one tap from Rename on the habit row itself, so it always
+                // asks — see HabitDeleteConfirmationContent. The prompt replaces this
+                // screen's content rather than pushing a screen, so answering it returns
+                // straight to the grid still in edit mode.
+                HabitDeleteConfirmationContent(
+                    message = deleteConfirmationMessage(
+                        habitName = toDelete.name,
+                        completionCount = state.completions[toDelete.id]?.size ?: 0,
+                    ),
+                    onCancel = { pendingDelete = null },
+                    onConfirm = {
+                        viewModel.deleteHabit(toDelete.id)
+                        pendingDelete = null
+                    },
+                )
+            } else {
+                HabitTrackerScreen(
+                    habits = activeHabits,
+                    completions = state.completions,
+                    weekStart = state.weekStart,
+                    today = today,
+                    weekOffset = weekOffset,
+                    canGoBack = canGoBack,
+                    canGoForward = canGoForward,
+                    loaded = loaded,
+                    limitMessage = limitMessage,
+                    editMode = editMode,
+                    onAddTapped = {
+                        if (viewModel.requestAdd()) {
+                            navigateTo(screenFactory = { AddHabitScreen(it) }) { name ->
+                                viewModel.addHabit(name)
+                            }
                         }
-                    }
-                },
-                onSettingsTapped = {
-                    navigateTo(screenFactory = { HabitSettingsScreen(it, viewModel) })
-                },
-                onToggle = viewModel::toggleCompletion,
-                onToggleEditMode = viewModel::toggleEditMode,
-                onHabitRowTapped = { habitId ->
-                    navigateTo(screenFactory = { HabitDetailScreen(it, viewModel, habitId) })
-                },
-                onDismissLimitMessage = viewModel::dismissLimitMessage,
-                onPreviousWeek = viewModel::goToPreviousWeek,
-                onNextWeek = viewModel::goToNextWeek,
-            )
+                    },
+                    onSettingsTapped = {
+                        navigateTo(screenFactory = { HabitSettingsScreen(it, viewModel) })
+                    },
+                    onToggle = viewModel::toggleCompletion,
+                    onToggleEditMode = viewModel::toggleEditMode,
+                    onRenameHabit = { habit ->
+                        navigateTo(screenFactory = {
+                            AddHabitScreen(
+                                it,
+                                initialName = habit.name,
+                                screenTitle = "Rename Habit",
+                                submitLabel = "SAVE",
+                            )
+                        }) { newName ->
+                            viewModel.renameHabit(habit.id, newName)
+                        }
+                    },
+                    onArchiveHabit = { habit -> viewModel.archiveHabit(habit.id) },
+                    onDeleteHabit = { habit -> pendingDelete = habit },
+                    onDismissLimitMessage = viewModel::dismissLimitMessage,
+                    onPreviousWeek = viewModel::goToPreviousWeek,
+                    onNextWeek = viewModel::goToNextWeek,
+                )
+            }
         }
     }
 }
@@ -496,7 +521,9 @@ private fun HabitTrackerScreen(
     onSettingsTapped: () -> Unit,
     onToggle: (habitId: String, epochDay: Long) -> Unit,
     onToggleEditMode: () -> Unit,
-    onHabitRowTapped: (habitId: String) -> Unit,
+    onRenameHabit: (Habit) -> Unit,
+    onArchiveHabit: (Habit) -> Unit,
+    onDeleteHabit: (Habit) -> Unit,
     onDismissLimitMessage: () -> Unit,
     onPreviousWeek: () -> Unit,
     onNextWeek: () -> Unit,
@@ -561,7 +588,7 @@ private fun HabitTrackerScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .padding(horizontal = 2f.gridUnitsAsDp()),
+                        .padding(horizontal = CONTENT_SIDE_PADDING_UNITS.gridUnitsAsDp()),
                     // Fixed top-anchored rhythm: the day-letter row sits a constant gap
                     // below the top bar, and habit blocks stack below it with the same
                     // gap. (Previously Arrangement.SpaceEvenly redistributed the leftover
@@ -575,7 +602,15 @@ private fun HabitTrackerScreen(
                     // rather than as part of the top bar it was previously flush against.
                     Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
 
-                    DayLetterRow(weekStart = displayedWeekStart, todayIndex = todayIndex)
+                    DayLetterRow(
+                        weekStart = displayedWeekStart,
+                        todayIndex = todayIndex,
+                        // Hidden rather than removed while editing: the letters head seven
+                        // day columns, and edit mode replaces those columns with the action
+                        // row, so they'd be labelling nothing. Keeping the row's height
+                        // means the habits below stay put when edit mode toggles.
+                        modifier = Modifier.alpha(if (editMode) 0f else 1f),
+                    )
 
                     Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
 
@@ -607,7 +642,9 @@ private fun HabitTrackerScreen(
                             startWeekEpoch = LocalDate.ofEpochDay(habit.createdAt).snappedToWeekStart(weekStart).toEpochDay(),
                             editMode = editMode,
                             onToggle = onToggle,
-                            onRowTap = { onHabitRowTapped(habit.id) },
+                            onRename = { onRenameHabit(habit) },
+                            onArchive = { onArchiveHabit(habit) },
+                            onDelete = { onDeleteHabit(habit) },
                         )
                     }
                 }
@@ -663,17 +700,17 @@ private fun EmptyHabitsContent(modifier: Modifier = Modifier) {
             variant = LightTextVariant.Copy,
             align = TextAlign.Center,
             lighten = true,
-            modifier = Modifier.padding(horizontal = 2f.gridUnitsAsDp()),
+            modifier = Modifier.padding(horizontal = CONTENT_SIDE_PADDING_UNITS.gridUnitsAsDp()),
         )
     }
 }
 
 @Composable
-private fun DayLetterRow(weekStart: LocalDate, todayIndex: Int) {
+private fun DayLetterRow(weekStart: LocalDate, todayIndex: Int, modifier: Modifier = Modifier) {
     val letters = remember(weekStart) {
         (0..6).map { dayLetterFor(weekStart.plusDays(it.toLong()).dayOfWeek) }
     }
-    Row(modifier = Modifier.fillMaxWidth()) {
+    Row(modifier = modifier.fillMaxWidth()) {
         letters.forEachIndexed { index, letter ->
             Box(
                 modifier = Modifier.weight(1f),
@@ -692,15 +729,17 @@ private fun DayLetterRow(weekStart: LocalDate, todayIndex: Int) {
 }
 
 /**
- * Not editing: a plain row, cells individually tappable to toggle completion.
+ * Not editing: the habit's name over its 7-day strip, cells individually tappable.
  *
- * Editing: the entire row — name and all 7 cells — becomes one tap target that opens
- * [HabitDetailScreen], marked by a chevron in the name row rather than a box drawn
- * around the row. Deliberately no per-row delete/action icon: a habit
- * row is already compound (name + a 7-cell strip), so a second affordance crammed into
- * a ~30dp-tall row would be cramped and easy to mis-tap. One large, forgiving target
- * per row instead — cells stop responding to taps individually (see [DayCheckbox]),
- * so a tap anywhere in the row, cells included, falls through to this box.
+ * Editing: the same name in the same place, with the strip swapped in place for the
+ * habit's three management actions. The strip is inert in edit mode anyway — dimmed,
+ * unclickable, present only to hold the layout — so the row's lower half is spent on
+ * decoration. Putting Rename/Archive/Delete there instead costs no extra screen and no
+ * extra tap, and every habit's actions are visible at once.
+ *
+ * The action row is deliberately [MIN_TOUCH_TARGET] tall, the same height the day strip
+ * occupies, so a row's total height is identical in both modes and toggling edit doesn't
+ * shift the grid vertically.
  */
 @Composable
 private fun HabitBlock(
@@ -712,51 +751,33 @@ private fun HabitBlock(
     startWeekEpoch: Long,
     editMode: Boolean,
     onToggle: (habitId: String, epochDay: Long) -> Unit,
-    onRowTap: () -> Unit,
+    onRename: () -> Unit,
+    onArchive: () -> Unit,
+    onDelete: () -> Unit,
 ) {
-    val rowContent: @Composable () -> Unit = {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                LightText(
-                    text = habit.name,
-                    variant = LightTextVariant.Detail,
-                    // The grid allots exactly one line per habit name; a name that's somehow
-                    // longer than HABIT_NAME_MAX_LENGTH (shouldn't happen — the naming screen
-                    // enforces the cap while typing) degrades to an ellipsis instead of
-                    // wrapping and breaking the layout below it.
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+    Column(modifier = Modifier.fillMaxWidth()) {
+        LightText(
+            text = habit.name,
+            variant = LightTextVariant.Detail,
+            // The grid allots exactly one line per habit name; a name that's somehow
+            // longer than HABIT_NAME_MAX_LENGTH (shouldn't happen — the naming screen
+            // enforces the cap while typing) degrades to an ellipsis instead of
+            // wrapping and breaking the layout below it.
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
 
-                // Editing: a chevron in the name row's otherwise-empty right side. It says
-                // "this opens something", which is what a row tap actually does — a box
-                // drawn around the row would only say "these things are grouped".
-                if (editMode) {
-                    // A pencil rather than a chevron: a chevron carries a convention of
-                    // "row navigation, vertically centred", and centring it against the
-                    // full row means putting it beside the strip — which would cut the
-                    // strip below the 350dp that keeps day cells at 50dp. A pencil marks
-                    // the row as editable without implying that geometry.
-                    //
-                    // Sized to the name's text line, not larger: a taller glyph stretches
-                    // this Row and pushes the day strip down, which shifts every habit's
-                    // position the moment edit mode is entered. Kept on the right so the
-                    // name stays left-aligned with the first day cell in both modes.
-                    LightIcon(
-                        icon = LightIcons.PENCIL,
-                        size = 0.8f,
-                        contentDescription = null,
-                        modifier = Modifier.padding(end = DAY_CELL_EDGE_INSET_UNITS.gridUnitsAsDp()),
-                    )
-                }
-            }
+        Spacer(modifier = Modifier.height(0.35f.verticalGridUnitsAsDp()))
 
-            Spacer(modifier = Modifier.height(0.35f.verticalGridUnitsAsDp()))
-
+        if (editMode) {
+            HabitActionRow(
+                habitName = habit.name,
+                onRename = onRename,
+                onArchive = onArchive,
+                onDelete = onDelete,
+            )
+        } else {
             Row(modifier = Modifier.fillMaxWidth()) {
                 for (dayIndex in 0..6) {
                     val epochDay = weekStart.plusDays(dayIndex.toLong()).toEpochDay()
@@ -769,32 +790,67 @@ private fun HabitBlock(
                             filled = epochDay in completedDays,
                             isToday = dayIndex == todayIndex,
                             isFuture = !inRange,
-                            editMode = editMode,
-                            onToggle = if (editMode || !inRange) null else { { onToggle(habit.id, epochDay) } },
+                            onToggle = if (inRange) { { onToggle(habit.id, epochDay) } } else null,
                         )
                     }
                 }
             }
         }
     }
+}
 
-    if (editMode) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                // No extra vertical padding: the row content (name + strip) is already
-                // ~80dp tall, well past the 48dp target minimum, and padding here used to
-                // exist only to sit inside the old border. Without it the rows land at the
-                // same y in both modes, so toggling edit doesn't visibly jolt the grid.
-                .lightClickable(
-                    onClickLabel = "Edit ${habit.name}",
-                    onClick = onRowTap,
-                ),
-        ) {
-            rowContent()
-        }
-    } else {
-        rowContent()
+/**
+ * A habit's three management actions, laid out across the width the day strip would
+ * otherwise occupy.
+ *
+ * Start / centre / end rather than three centred thirds: that is the same three-slot
+ * arrangement [com.thelightphone.sdk.ui.LightBottomBar] uses for three items, and it puts
+ * Rename's left edge under the habit name and Delete's right edge under the last day
+ * cell, so the row spans exactly what the strip spanned. Each action still fills its
+ * whole third, so the row has no dead gaps between targets.
+ *
+ * Underlined [LightTextVariant.Detail] matches the inline row actions already used for
+ * archived habits in [HabitSettingsScreen] — same idiom, one place to change it — and
+ * keeps the actions from out-shouting the habit name, which is set at the same size.
+ */
+@Composable
+private fun HabitActionRow(
+    habitName: String,
+    onRename: () -> Unit,
+    onArchive: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(MIN_TOUCH_TARGET),
+    ) {
+        HabitAction("RENAME", "Rename $habitName", Alignment.CenterStart, onRename)
+        HabitAction("ARCHIVE", "Archive $habitName", Alignment.Center, onArchive)
+        HabitAction("DELETE", "Delete $habitName", Alignment.CenterEnd, onDelete)
+    }
+}
+
+@Composable
+private fun RowScope.HabitAction(
+    label: String,
+    clickLabel: String,
+    align: Alignment,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .weight(1f)
+            .fillMaxHeight()
+            .lightClickable(onClickLabel = clickLabel, onClick = onClick),
+        contentAlignment = align,
+    ) {
+        LightText(
+            text = label,
+            variant = LightTextVariant.Detail,
+            underline = true,
+            maxLines = 1,
+        )
     }
 }
 
@@ -808,27 +864,22 @@ private fun HabitBlock(
  * Days outside a habit's trackable range — after today, or before the week its habit was
  * created in — render with a secondary (dimmer) border and don't respond to taps: clearly
  * not-yet-available (future) or not-yet-existing (pre-creation) rather than just
- * "unchecked." In edit mode every cell gets that same muted treatment regardless of date
- * (dimmer border, dimmer fill, no today ring, no click) so the strip visibly reads as
- * inert while editing rather than looking like a still-live grid a tap might silently
- * toggle.
+ * "unchecked."
+ *
+ * Edit mode needs no muted variant of this: the strip isn't drawn at all while editing
+ * (see [HabitBlock]), so there is no inert grid on screen for a tap to look live against.
  */
 @Composable
-private fun DayCheckbox(filled: Boolean, isToday: Boolean, isFuture: Boolean, editMode: Boolean, onToggle: (() -> Unit)?) {
+private fun DayCheckbox(filled: Boolean, isToday: Boolean, isFuture: Boolean, onToggle: (() -> Unit)?) {
     val colors = LightThemeTokens.colors
     val cellSize = DAY_CELL_UNITS.gridUnitsAsDp()
     val haloSize = cellSize + 10.dp
     // Hit area only. The halo stays at its drawn size so raising the target doesn't inflate
     // the today ring along with it — 45dp of drawn halo, 48dp of tappable box around it.
     val touchSize = maxOf(haloSize, MIN_TOUCH_TARGET)
-    val dimmed = isFuture || editMode
-    val borderColor = if (dimmed) colors.contentSecondary else colors.content
-    val fillColor = when {
-        !filled -> Color.Transparent
-        editMode -> colors.contentSecondary
-        else -> colors.content
-    }
-    val showTodayRing = isToday && !editMode
+    val borderColor = if (isFuture) colors.contentSecondary else colors.content
+    val fillColor = if (filled) colors.content else Color.Transparent
+    val showTodayRing = isToday
 
     Box(
         modifier = Modifier

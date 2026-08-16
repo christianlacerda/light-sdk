@@ -36,9 +36,10 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 const val HABIT_NAME_MAX_LENGTH = 40
 
 /**
- * Full-screen habit-naming flow, reached via `navigateTo` from [HomeScreen] (add) and
- * from [HabitDetailScreen] (rename — same keyboard/validation flow, just pre-filled
- * with the existing name and different title/submit copy).
+ * Full-screen habit-naming flow, reached via `navigateTo` from [HomeScreen] — either from
+ * the bottom bar's `+` (add) or from a habit row's Rename action in edit mode (same
+ * keyboard/validation flow, just pre-filled with the existing name and different
+ * title/submit copy).
  *
  * A separate screen (rather than a modal) because naming needs the LP3 keyboard,
  * which is itself a full-screen affair (top bar + input + embedded keyboard +

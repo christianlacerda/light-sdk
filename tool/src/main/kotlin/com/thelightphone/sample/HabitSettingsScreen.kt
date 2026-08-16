@@ -36,11 +36,10 @@ import com.thelightphone.sdk.ui.lightClickable
 /**
  * Settings screen, reached via the gear in [HomeScreen]'s bottom bar.
  *
- * Habit management itself (rename/archive/delete of *active* habits) lives on the
- * per-habit screen reached from the grid's edit mode ([HabitDetailScreen]) — one
- * management surface, not two. What's left here is what doesn't belong on a per-habit
- * screen: unarchiving (needs *a* home, and there's no more "active habits" list here to
- * put it next to) and the one real preference the tool has, week start day.
+ * Habit management itself (rename/archive/delete of *active* habits) lives inline on the
+ * habit rows in [HomeScreen]'s edit mode — one management surface, not two. What's left
+ * here is what those rows can't hold: unarchiving (an archived habit has no row on the
+ * grid) and the one real preference the tool has, week start day.
  *
  * Takes the same [HabitTrackerViewModel] instance the home screen uses (constructor
  * injection, same pattern as `AuthenticatorCodeScreen` sharing a repository) rather than
