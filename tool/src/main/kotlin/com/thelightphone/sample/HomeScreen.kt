@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -154,6 +153,12 @@ private const val CONTENT_SIDE_PADDING_UNITS = 2f
  * overlap.
  */
 private val MIN_TOUCH_TARGET = 48.dp
+
+/** How far the day-letter header fades in edit mode, where it heads columns that aren't
+ *  drawn. Present-but-quiet: enough to keep the screen recognisable, not enough to read
+ *  as an active label. Note the letters are already [LightText] `lighten`-ed apart from
+ *  today's, so this multiplies a contrast that isn't full to begin with. */
+private const val EDIT_MODE_DAY_LETTER_ALPHA = 0.5f
 
 private const val ADD_LIMIT_MESSAGE = "3 habits is the limit — archive one to add another."
 private const val RESTORE_LIMIT_MESSAGE = "3 habits is the limit — archive one to restore this."
@@ -605,11 +610,13 @@ private fun HabitTrackerScreen(
                     DayLetterRow(
                         weekStart = displayedWeekStart,
                         todayIndex = todayIndex,
-                        // Hidden rather than removed while editing: the letters head seven
-                        // day columns, and edit mode replaces those columns with the action
-                        // row, so they'd be labelling nothing. Keeping the row's height
-                        // means the habits below stay put when edit mode toggles.
-                        modifier = Modifier.alpha(if (editMode) 0f else 1f),
+                        // Faded, not removed, while editing. The letters head seven day
+                        // columns that edit mode replaces, so at full strength they'd be
+                        // labelling nothing — but keeping them faintly visible holds the
+                        // screen recognisably the same screen rather than swapping it for
+                        // a different one. Removing the row outright would also pull every
+                        // habit up by its height, which is the jolt this layout avoids.
+                        modifier = Modifier.alpha(if (editMode) EDIT_MODE_DAY_LETTER_ALPHA else 1f),
                     )
 
                     Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
@@ -799,19 +806,25 @@ private fun HabitBlock(
     }
 }
 
+/** Gap between two adjacent actions. Wide enough that DELETE is a deliberate reach from
+ *  ARCHIVE rather than the next thing along, which matters more here than saving width —
+ *  there's plenty of it going spare once the three are clustered. */
+private const val HABIT_ACTION_GAP_UNITS = 1.5f
+
 /**
- * A habit's three management actions, laid out across the width the day strip would
- * otherwise occupy.
- *
- * Start / centre / end rather than three centred thirds: that is the same three-slot
- * arrangement [com.thelightphone.sdk.ui.LightBottomBar] uses for three items, and it puts
- * Rename's left edge under the habit name and Delete's right edge under the last day
- * cell, so the row spans exactly what the strip spanned. Each action still fills its
- * whole third, so the row has no dead gaps between targets.
+ * A habit's three management actions, occupying the band the day strip would otherwise
+ * fill. Clustered against the right edge rather than spread across the full width: the
+ * habit name owns the left of the row, so ending the actions flush with the content's
+ * right edge (where the name's own line ends) keeps one clean vertical edge down the
+ * screen instead of three columns of text starting at unrelated places.
  *
  * Underlined [LightTextVariant.Detail] matches the inline row actions already used for
  * archived habits in [HabitSettingsScreen] — same idiom, one place to change it — and
  * keeps the actions from out-shouting the habit name, which is set at the same size.
+ *
+ * The row is pinned to [MIN_TOUCH_TARGET], which is also what the day strip occupied, so
+ * a habit's total height doesn't change when edit mode toggles. Each action fills that
+ * full height, so its target is the band around the word, not just the glyphs.
  */
 @Composable
 private fun HabitActionRow(
@@ -824,26 +837,25 @@ private fun HabitActionRow(
         modifier = Modifier
             .fillMaxWidth()
             .height(MIN_TOUCH_TARGET),
+        horizontalArrangement = Arrangement.spacedBy(
+            space = HABIT_ACTION_GAP_UNITS.gridUnitsAsDp(),
+            alignment = Alignment.End,
+        ),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        HabitAction("RENAME", "Rename $habitName", Alignment.CenterStart, onRename)
-        HabitAction("ARCHIVE", "Archive $habitName", Alignment.Center, onArchive)
-        HabitAction("DELETE", "Delete $habitName", Alignment.CenterEnd, onDelete)
+        HabitAction("RENAME", "Rename $habitName", onRename)
+        HabitAction("ARCHIVE", "Archive $habitName", onArchive)
+        HabitAction("DELETE", "Delete $habitName", onDelete)
     }
 }
 
 @Composable
-private fun RowScope.HabitAction(
-    label: String,
-    clickLabel: String,
-    align: Alignment,
-    onClick: () -> Unit,
-) {
+private fun HabitAction(label: String, clickLabel: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .weight(1f)
             .fillMaxHeight()
             .lightClickable(onClickLabel = clickLabel, onClick = onClick),
-        contentAlignment = align,
+        contentAlignment = Alignment.Center,
     ) {
         LightText(
             text = label,
