@@ -21,7 +21,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -155,12 +154,6 @@ private const val CONTENT_SIDE_PADDING_UNITS = 2f
  * overlap.
  */
 private val MIN_TOUCH_TARGET = 48.dp
-
-/** How far the day-letter header fades in edit mode, where it heads columns that aren't
- *  drawn. Present-but-quiet: enough to keep the screen recognisable, not enough to read
- *  as an active label. Note the letters are already [LightText] `lighten`-ed apart from
- *  today's, so this multiplies a contrast that isn't full to begin with. */
-private const val EDIT_MODE_DAY_LETTER_ALPHA = 0.5f
 
 private const val ADD_LIMIT_MESSAGE = "3 habits is the limit — archive one to add another."
 private const val RESTORE_LIMIT_MESSAGE = "3 habits is the limit — archive one to restore this."
@@ -618,32 +611,31 @@ private fun HabitTrackerScreen(
                     // rather than as part of the top bar it was previously flush against.
                     Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
 
-                    DayLetterRow(
-                        weekStart = displayedWeekStart,
-                        todayIndex = todayIndex,
-                        markToday = !editMode,
-                        // Faded, not removed, while editing. The letters head seven day
-                        // columns that edit mode replaces, so at full strength they'd be
-                        // labelling nothing — but keeping them faintly visible holds the
-                        // screen recognisably the same screen rather than swapping it for
-                        // a different one. Removing the row outright would also pull every
-                        // habit up by its height, which is the jolt this layout avoids.
-                        modifier = Modifier.alpha(if (editMode) EDIT_MODE_DAY_LETTER_ALPHA else 1f),
-                    )
+                    // No day letters while editing. They head seven day columns, and edit
+                    // mode draws no columns — fading them still left a header labelling
+                    // nothing, and the row it occupied is worth more as space for the list,
+                    // which is the longest it ever gets in this mode. Habits do shift up on
+                    // entering edit mode as a result; that's the trade, and edit mode is
+                    // visibly its own mode rather than the grid with extras.
+                    if (!editMode) {
+                        DayLetterRow(weekStart = displayedWeekStart, todayIndex = todayIndex)
 
-                    Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
+                        Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
+                    }
 
-                    // The letters stay above this; only the habits scroll. Edit mode can run
-                    // past the screen once archived habits are listed, and a header that
-                    // scrolled away would leave the day columns unlabelled exactly when the
-                    // list is long enough to need labelling.
-                    //
-                    // Inside, not Outside: an Outside scrollbar reserves a 2u gutter
-                    // (scrollBarGutterUnits), which would narrow the habit rows against the
-                    // fixed letter row above and knock every day cell out of its column.
+                    // Editing reserves a gutter for the scroll bar so it never crosses a row
+                    // separator; resting overlays instead. The gutter is charged whether or
+                    // not a bar is showing, and at rest that would narrow the day strip,
+                    // dropping each column from 3.29u to 3.0u and taking the cells under the
+                    // 48dp target. Resting caps at MAX_HABITS and can't overflow, so it never
+                    // draws a bar to overlap anything anyway.
                     LightScrollView(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
-                        scrollBarPosition = LightScrollBarPosition.Inside,
+                        scrollBarPosition = if (editMode) {
+                            LightScrollBarPosition.Outside
+                        } else {
+                            LightScrollBarPosition.Inside
+                        },
                     ) {
                         habits.forEachIndexed { index, habit ->
                             if (index > 0) {
@@ -669,16 +661,7 @@ private fun HabitTrackerScreen(
                         // have no place on the resting grid — an archived habit has no week
                         // to show.
                         if (editMode && archivedHabits.isNotEmpty()) {
-                            if (habits.isNotEmpty()) HabitSeparator(editMode = true)
-
-                            LightText(
-                                text = "ARCHIVED",
-                                variant = LightTextVariant.Detail,
-                                lighten = true,
-                                modifier = Modifier.padding(
-                                    bottom = 0.5f.verticalGridUnitsAsDp(),
-                                ),
-                            )
+                            ArchivedSectionHeader(afterHabits = habits.isNotEmpty())
 
                             archivedHabits.forEachIndexed { index, habit ->
                                 if (index > 0) HabitSeparator(editMode = true)
@@ -777,25 +760,14 @@ private fun EmptyHabitsContent(modifier: Modifier = Modifier) {
     }
 }
 
-/**
- * @param markToday whether today's letter is picked out from the rest. Off in edit mode:
- *   the underline points down at today's cell, and edit mode doesn't draw the cells, so
- *   marking a column that isn't there is the one part of the faded header that actively
- *   misleads rather than just lingering.
- */
 @Composable
-private fun DayLetterRow(
-    weekStart: LocalDate,
-    todayIndex: Int,
-    markToday: Boolean = true,
-    modifier: Modifier = Modifier,
-) {
+private fun DayLetterRow(weekStart: LocalDate, todayIndex: Int, modifier: Modifier = Modifier) {
     val letters = remember(weekStart) {
         (0..6).map { dayLetterFor(weekStart.plusDays(it.toLong()).dayOfWeek) }
     }
     Row(modifier = modifier.fillMaxWidth()) {
         letters.forEachIndexed { index, letter ->
-            val isToday = markToday && index == todayIndex
+            val isToday = index == todayIndex
             Box(
                 modifier = Modifier.weight(1f),
                 contentAlignment = Alignment.Center,
@@ -888,20 +860,6 @@ private fun HabitBlock(
 private const val HABIT_ACTION_GAP_UNITS = 1.5f
 
 /**
- * Width kept clear at the right of an action row for the scroll bar to sit in.
- *
- * The list scrolls with an *Inside* bar, which overlays the content instead of reserving
- * a gutter — the alternative reserves 2u and would narrow the day strip against the fixed
- * letter row above it, dropping each day column from 3.29u to 3.0u and taking the cells
- * under the 48dp target. So the strip keeps the full width and the actions, which are the
- * only thing that ever shares the screen with a visible bar, step aside instead. (Resting
- * mode caps at MAX_HABITS and never overflows, so no bar is drawn over the day cells.)
- *
- * Matches SCROLLBAR_WIDTH_UNITS in the SDK's LightScrollView, which isn't public.
- */
-private const val SCROLLBAR_CLEARANCE_UNITS = 2f
-
-/**
  * The gap between two habit rows. Editing draws a line in it: the actions say a row does
  * something, this says where one row's actions end and the next row's begin. The line
  * splits the resting gap in half rather than adding to it, so the rhythm is identical in
@@ -921,6 +879,44 @@ private fun HabitSeparator(editMode: Boolean) {
     } else {
         Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
     }
+}
+
+/**
+ * Marks where the active habits end and the archived ones begin.
+ *
+ * Centred, which is the whole point. Left-aligned in [LightTextVariant.Detail] and
+ * `lighten`-ed it was drawn *identically* to the archived habit name two lines below it —
+ * same size, same weight, same dimming, same x — so it read as one more habit. Nothing
+ * else in the list is centred, so moving it off the left margin stops it being a name.
+ *
+ * It also gets more room than [HabitSeparator] gives between two habits: the break between
+ * active and archived is a bigger one than the break between two rows, and space is what
+ * says so. Same 1dp rule as everywhere else rather than a heavier one — the label and the
+ * gaps carry it.
+ */
+@Composable
+private fun ArchivedSectionHeader(afterHabits: Boolean) {
+    if (afterHabits) {
+        Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(LightThemeTokens.colors.contentSecondary),
+        )
+    }
+
+    Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
+
+    LightText(
+        text = "ARCHIVED",
+        variant = LightTextVariant.Detail,
+        lighten = true,
+        align = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth(),
+    )
+
+    Spacer(modifier = Modifier.height(1f.verticalGridUnitsAsDp()))
 }
 
 /**
@@ -965,8 +961,9 @@ private data class HabitActionSpec(
  *
  * Clustered against the right rather than spread across the width: the habit name owns the
  * left of the row, so ending the actions on one vertical edge reads better than starting
- * them at unrelated places. That edge sits [SCROLLBAR_CLEARANCE_UNITS] in from the content
- * edge rather than flush against it, so a scroll bar never lands on top of DELETE.
+ * them at unrelated places. Editing reserves a gutter for the scroll bar (see the
+ * LightScrollView call in HabitTrackerScreen), so that edge can sit flush against the
+ * content without a bar ever landing on top of DELETE.
  *
  * Underlined [LightTextVariant.Detail] keeps the actions from out-shouting the habit name,
  * which is set at the same size.
@@ -980,8 +977,7 @@ private fun HabitActionRow(vararg actions: HabitActionSpec) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(MIN_TOUCH_TARGET)
-            .padding(end = SCROLLBAR_CLEARANCE_UNITS.gridUnitsAsDp()),
+            .height(MIN_TOUCH_TARGET),
         horizontalArrangement = Arrangement.spacedBy(
             space = HABIT_ACTION_GAP_UNITS.gridUnitsAsDp(),
             alignment = Alignment.End,
