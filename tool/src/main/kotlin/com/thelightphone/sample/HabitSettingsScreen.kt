@@ -1,29 +1,20 @@
 package com.thelightphone.sample
 
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextOverflow
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
-import com.thelightphone.sdk.ui.LightFullscreenModal
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
-import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTheme
@@ -34,12 +25,17 @@ import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 
 /**
- * Settings screen, reached via the gear in [HomeScreen]'s bottom bar.
+ * Preferences, reached via the gear in [HomeScreen]'s resting bottom bar.
  *
- * Habit management itself (rename/archive/delete of *active* habits) lives inline on the
- * habit rows in [HomeScreen]'s edit mode — one management surface, not two. What's left
- * here is what those rows can't hold: unarchiving (an archived habit has no row on the
- * grid) and the one real preference the tool has, week start day.
+ * Everything about the *habits* — add, rename, archive, unarchive, delete — lives on the
+ * habit rows in [HomeScreen]'s edit mode, including archived ones, which are listed below
+ * the active habits there. What's left here is what that split leaves behind: preferences,
+ * of which the tool has exactly one.
+ *
+ * A one-option settings screen is thin, and deliberately so. The alternative was keeping
+ * content management here to pad it out, which is what made the report feel misfiled when
+ * it lived behind this gear. The screen earns its place by holding the only thing that is
+ * genuinely a preference, not by being full.
  *
  * Takes the same [HabitTrackerViewModel] instance the home screen uses (constructor
  * injection, same pattern as `AuthenticatorCodeScreen` sharing a repository) rather than
@@ -56,50 +52,13 @@ class HabitSettingsScreen(
     override fun Content() {
         val themeColors by LightThemeController.colors.collectAsState()
         val state by viewModel.state.collectAsState()
-        val limitMessage by viewModel.limitMessage.collectAsState()
-        var pendingDelete by remember { mutableStateOf<Habit?>(null) }
-
-        val archivedHabits = state.habits.filter { it.archivedAt != null }.sortedBy { it.order }
 
         LightTheme(colors = themeColors) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                val toDelete = pendingDelete
-                if (toDelete != null) {
-                    val completionCount = state.completions[toDelete.id]?.size ?: 0
-                    HabitDeleteConfirmationContent(
-                        message = deleteConfirmationMessage(toDelete.name, completionCount),
-                        onCancel = { pendingDelete = null },
-                        onConfirm = {
-                            viewModel.deleteHabit(toDelete.id)
-                            pendingDelete = null
-                        },
-                    )
-                } else {
-                    HabitSettingsContent(
-                        weekStart = state.weekStart,
-                        archivedHabits = archivedHabits,
-                        onBack = { goBack() },
-                        onSetWeekStart = viewModel::setWeekStart,
-                        onUnarchive = { habitId -> viewModel.unarchiveHabit(habitId) },
-                        onRequestDelete = { habit ->
-                            val completionCount = state.completions[habit.id]?.size ?: 0
-                            if (completionCount == 0) {
-                                // Nothing would be lost — asking is pure ceremony.
-                                viewModel.deleteHabit(habit.id)
-                            } else {
-                                pendingDelete = habit
-                            }
-                        },
-                    )
-
-                    limitMessage?.let { message ->
-                        LightFullscreenModal(
-                            message = message,
-                            onClose = viewModel::dismissLimitMessage,
-                        )
-                    }
-                }
-            }
+            HabitSettingsContent(
+                weekStart = state.weekStart,
+                onBack = { goBack() },
+                onSetWeekStart = viewModel::setWeekStart,
+            )
         }
     }
 }
@@ -107,11 +66,8 @@ class HabitSettingsScreen(
 @Composable
 private fun HabitSettingsContent(
     weekStart: WeekStart,
-    archivedHabits: List<Habit>,
     onBack: () -> Unit,
     onSetWeekStart: (WeekStart) -> Unit,
-    onUnarchive: (String) -> Unit,
-    onRequestDelete: (Habit) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         LightTopBar(
@@ -124,9 +80,10 @@ private fun HabitSettingsContent(
             modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()),
         )
 
-        LightScrollView(
+        // No scroll container: one section of two rows cannot overflow, and a scrollbar
+        // gutter on a screen this short only advertises content that isn't there.
+        Column(
             modifier = Modifier
-                .weight(1f)
                 .fillMaxWidth()
                 .padding(start = 1f.gridUnitsAsDp()),
         ) {
@@ -141,21 +98,6 @@ private fun HabitSettingsContent(
                 selected = weekStart == WeekStart.MONDAY,
                 onClick = { onSetWeekStart(WeekStart.MONDAY) },
             )
-
-            Spacer(modifier = Modifier.height(1.5f.gridUnitsAsDp()))
-
-            SectionHeader(text = "ARCHIVED")
-            if (archivedHabits.isEmpty()) {
-                EmptySectionRow(text = "No archived habits.")
-            } else {
-                archivedHabits.forEach { habit ->
-                    ArchivedHabitRow(
-                        habit = habit,
-                        onUnarchive = { onUnarchive(habit.id) },
-                        onDelete = { onRequestDelete(habit) },
-                    )
-                }
-            }
         }
     }
 }
@@ -167,16 +109,6 @@ private fun SectionHeader(text: String) {
         variant = LightTextVariant.Detail,
         lighten = true,
         modifier = Modifier.padding(bottom = 0.5f.gridUnitsAsDp()),
-    )
-}
-
-@Composable
-private fun EmptySectionRow(text: String) {
-    LightText(
-        text = text,
-        variant = LightTextVariant.Copy,
-        lighten = true,
-        modifier = Modifier.padding(vertical = 0.5f.gridUnitsAsDp(), horizontal = 0.25f.gridUnitsAsDp()),
     )
 }
 
@@ -199,37 +131,4 @@ private fun WeekStartRow(label: String, selected: Boolean, onClick: () -> Unit) 
         )
         LightText(text = label, variant = LightTextVariant.Copy)
     }
-}
-
-@Composable
-private fun ArchivedHabitRow(habit: Habit, onUnarchive: () -> Unit, onDelete: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 0.75f.gridUnitsAsDp(), horizontal = 0.25f.gridUnitsAsDp()),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        LightText(
-            text = habit.name,
-            variant = LightTextVariant.Copy,
-            lighten = true,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        RowAction(text = "UNARCHIVE", onClick = onUnarchive)
-        Box(modifier = Modifier.padding(start = 1f.gridUnitsAsDp())) {
-            RowAction(text = "DELETE", onClick = onDelete)
-        }
-    }
-}
-
-@Composable
-private fun RowAction(text: String, onClick: () -> Unit) {
-    LightText(
-        text = text,
-        variant = LightTextVariant.Detail,
-        underline = true,
-        modifier = Modifier.lightClickable(onClick = onClick),
-    )
 }

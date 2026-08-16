@@ -40,6 +40,8 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightFullscreenModal
 import com.thelightphone.sdk.ui.LightIcons
+import com.thelightphone.sdk.ui.LightScrollBarPosition
+import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTheme
@@ -443,6 +445,7 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
         val canGoBack by viewModel.canGoBack.collectAsState()
         val canGoForward by viewModel.canGoForward.collectAsState()
         val activeHabits = remember(state) { state.habits.filter { it.archivedAt == null }.sortedBy { it.order } }
+        val archivedHabits = remember(state) { state.habits.filter { it.archivedAt != null }.sortedBy { it.order } }
         var pendingDelete by remember { mutableStateOf<Habit?>(null) }
 
         LightTheme(colors = themeColors) {
@@ -466,6 +469,7 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
             } else {
                 HabitTrackerScreen(
                     habits = activeHabits,
+                    archivedHabits = archivedHabits,
                     completions = state.completions,
                     weekStart = state.weekStart,
                     today = today,
@@ -503,6 +507,7 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
                         }
                     },
                     onArchiveHabit = { habit -> viewModel.archiveHabit(habit.id) },
+                    onUnarchiveHabit = { habit -> viewModel.unarchiveHabit(habit.id) },
                     onDeleteHabit = { habit -> pendingDelete = habit },
                     onDismissLimitMessage = viewModel::dismissLimitMessage,
                     onPreviousWeek = viewModel::goToPreviousWeek,
@@ -516,6 +521,7 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
 @Composable
 private fun HabitTrackerScreen(
     habits: List<Habit>,
+    archivedHabits: List<Habit>,
     completions: Map<String, Set<Long>>,
     weekStart: WeekStart,
     today: LocalDate,
@@ -532,6 +538,7 @@ private fun HabitTrackerScreen(
     onToggleEditMode: () -> Unit,
     onRenameHabit: (Habit) -> Unit,
     onArchiveHabit: (Habit) -> Unit,
+    onUnarchiveHabit: (Habit) -> Unit,
     onDeleteHabit: (Habit) -> Unit,
     onDismissLimitMessage: () -> Unit,
     onPreviousWeek: () -> Unit,
@@ -626,38 +633,62 @@ private fun HabitTrackerScreen(
 
                     Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
 
-                    habits.forEachIndexed { index, habit ->
-                        if (index > 0) {
-                            if (editMode) {
-                                // The chevron says a row opens something; this says where one
-                                // tap target ends and the next begins. Splitting the usual gap
-                                // around the line keeps the vertical rhythm identical in both
-                                // modes, so toggling edit doesn't shift the rows.
-                                Spacer(modifier = Modifier.height(0.6f.verticalGridUnitsAsDp()))
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(1.dp)
-                                        .background(LightThemeTokens.colors.contentSecondary),
+                    // The letters stay above this; only the habits scroll. Edit mode can run
+                    // past the screen once archived habits are listed, and a header that
+                    // scrolled away would leave the day columns unlabelled exactly when the
+                    // list is long enough to need labelling.
+                    //
+                    // Inside, not Outside: an Outside scrollbar reserves a 2u gutter
+                    // (scrollBarGutterUnits), which would narrow the habit rows against the
+                    // fixed letter row above and knock every day cell out of its column.
+                    LightScrollView(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        scrollBarPosition = LightScrollBarPosition.Inside,
+                    ) {
+                        habits.forEachIndexed { index, habit ->
+                            if (index > 0) {
+                                HabitSeparator(editMode = editMode)
+                            }
+                            HabitBlock(
+                                habit = habit,
+                                completedDays = completions[habit.id] ?: emptySet(),
+                                weekStart = displayedWeekStart,
+                                todayIndex = todayIndex,
+                                todayEpoch = todayEpoch,
+                                startWeekEpoch = LocalDate.ofEpochDay(habit.createdAt).snappedToWeekStart(weekStart).toEpochDay(),
+                                editMode = editMode,
+                                onToggle = onToggle,
+                                onRename = { onRenameHabit(habit) },
+                                onArchive = { onArchiveHabit(habit) },
+                                onDelete = { onDeleteHabit(habit) },
+                            )
+                        }
+
+                        // Archived habits appear only while editing, below the active ones.
+                        // They're habit management, which is what edit mode is for, and they
+                        // have no place on the resting grid — an archived habit has no week
+                        // to show.
+                        if (editMode && archivedHabits.isNotEmpty()) {
+                            if (habits.isNotEmpty()) HabitSeparator(editMode = true)
+
+                            LightText(
+                                text = "ARCHIVED",
+                                variant = LightTextVariant.Detail,
+                                lighten = true,
+                                modifier = Modifier.padding(
+                                    bottom = 0.5f.verticalGridUnitsAsDp(),
+                                ),
+                            )
+
+                            archivedHabits.forEachIndexed { index, habit ->
+                                if (index > 0) HabitSeparator(editMode = true)
+                                ArchivedHabitBlock(
+                                    habit = habit,
+                                    onUnarchive = { onUnarchiveHabit(habit) },
+                                    onDelete = { onDeleteHabit(habit) },
                                 )
-                                Spacer(modifier = Modifier.height(0.6f.verticalGridUnitsAsDp()))
-                            } else {
-                                Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
                             }
                         }
-                        HabitBlock(
-                            habit = habit,
-                            completedDays = completions[habit.id] ?: emptySet(),
-                            weekStart = displayedWeekStart,
-                            todayIndex = todayIndex,
-                            todayEpoch = todayEpoch,
-                            startWeekEpoch = LocalDate.ofEpochDay(habit.createdAt).snappedToWeekStart(weekStart).toEpochDay(),
-                            editMode = editMode,
-                            onToggle = onToggle,
-                            onRename = { onRenameHabit(habit) },
-                            onArchive = { onArchiveHabit(habit) },
-                            onDelete = { onDeleteHabit(habit) },
-                        )
                     }
                 }
             }
@@ -679,11 +710,19 @@ private fun HabitTrackerScreen(
             // somewhere it can be acted on, with ARCHIVE already on every row.
             LightBottomBar(
                 items = listOf(
-                    LightBarButton.LightIcon(
-                        icon = LightIcons.SETTINGS,
-                        contentDescription = "Settings",
-                        onClick = onSettingsTapped,
-                    ),
+                    // No gear while editing. Edit mode is about the habits in front of you;
+                    // an escape hatch to app preferences in the middle of that is an offer
+                    // to do something unrelated. The slot stays (LightBarButtonView draws a
+                    // spacer for a null item) so the two live controls don't slide sideways.
+                    if (editMode) {
+                        null
+                    } else {
+                        LightBarButton.LightIcon(
+                            icon = LightIcons.SETTINGS,
+                            contentDescription = "Settings",
+                            onClick = onSettingsTapped,
+                        )
+                    },
                     if (editMode) {
                         LightBarButton.Text(text = "DONE", onClick = onToggleEditMode)
                     } else {
@@ -817,10 +856,9 @@ private fun HabitBlock(
 
         if (editMode) {
             HabitActionRow(
-                habitName = habit.name,
-                onRename = onRename,
-                onArchive = onArchive,
-                onDelete = onDelete,
+                HabitActionSpec("RENAME", "Rename ${habit.name}", onRename),
+                HabitActionSpec("ARCHIVE", "Archive ${habit.name}", onArchive),
+                HabitActionSpec("DELETE", "Delete ${habit.name}", onDelete),
             )
         } else {
             Row(modifier = Modifier.fillMaxWidth()) {
@@ -850,40 +888,107 @@ private fun HabitBlock(
 private const val HABIT_ACTION_GAP_UNITS = 1.5f
 
 /**
- * A habit's three management actions, occupying the band the day strip would otherwise
- * fill. Clustered against the right edge rather than spread across the full width: the
- * habit name owns the left of the row, so ending the actions flush with the content's
- * right edge (where the name's own line ends) keeps one clean vertical edge down the
- * screen instead of three columns of text starting at unrelated places.
+ * Width kept clear at the right of an action row for the scroll bar to sit in.
  *
- * Underlined [LightTextVariant.Detail] matches the inline row actions already used for
- * archived habits in [HabitSettingsScreen] — same idiom, one place to change it — and
- * keeps the actions from out-shouting the habit name, which is set at the same size.
+ * The list scrolls with an *Inside* bar, which overlays the content instead of reserving
+ * a gutter — the alternative reserves 2u and would narrow the day strip against the fixed
+ * letter row above it, dropping each day column from 3.29u to 3.0u and taking the cells
+ * under the 48dp target. So the strip keeps the full width and the actions, which are the
+ * only thing that ever shares the screen with a visible bar, step aside instead. (Resting
+ * mode caps at MAX_HABITS and never overflows, so no bar is drawn over the day cells.)
  *
- * The row is pinned to [MIN_TOUCH_TARGET], which is also what the day strip occupied, so
- * a habit's total height doesn't change when edit mode toggles. Each action fills that
- * full height, so its target is the band around the word, not just the glyphs.
+ * Matches SCROLLBAR_WIDTH_UNITS in the SDK's LightScrollView, which isn't public.
+ */
+private const val SCROLLBAR_CLEARANCE_UNITS = 2f
+
+/**
+ * The gap between two habit rows. Editing draws a line in it: the actions say a row does
+ * something, this says where one row's actions end and the next row's begin. The line
+ * splits the resting gap in half rather than adding to it, so the rhythm is identical in
+ * both modes and toggling edit doesn't shift anything.
  */
 @Composable
-private fun HabitActionRow(
-    habitName: String,
-    onRename: () -> Unit,
-    onArchive: () -> Unit,
-    onDelete: () -> Unit,
-) {
+private fun HabitSeparator(editMode: Boolean) {
+    if (editMode) {
+        Spacer(modifier = Modifier.height(0.6f.verticalGridUnitsAsDp()))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(LightThemeTokens.colors.contentSecondary),
+        )
+        Spacer(modifier = Modifier.height(0.6f.verticalGridUnitsAsDp()))
+    } else {
+        Spacer(modifier = Modifier.height(1.2f.verticalGridUnitsAsDp()))
+    }
+}
+
+/**
+ * An archived habit, listed below the active ones while editing.
+ *
+ * Same shape as an active row in edit mode — name over a right-clustered action row — so
+ * the two read as one list rather than two widgets. The name is dimmed, which is the only
+ * thing distinguishing an archived habit visually, and the actions differ: an archived
+ * habit can come back or be erased, but there's nothing to rename on something you aren't
+ * tracking.
+ */
+@Composable
+private fun ArchivedHabitBlock(habit: Habit, onUnarchive: () -> Unit, onDelete: () -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        LightText(
+            text = habit.name,
+            variant = LightTextVariant.Detail,
+            lighten = true,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        Spacer(modifier = Modifier.height(0.35f.verticalGridUnitsAsDp()))
+
+        HabitActionRow(
+            HabitActionSpec("UNARCHIVE", "Unarchive ${habit.name}", onUnarchive),
+            HabitActionSpec("DELETE", "Delete ${habit.name}", onDelete),
+        )
+    }
+}
+
+/** One action in a habit row: what it says, what it announces, what it does. */
+private data class HabitActionSpec(
+    val label: String,
+    val clickLabel: String,
+    val onClick: () -> Unit,
+)
+
+/**
+ * A habit's management actions, occupying the band the day strip would otherwise fill.
+ *
+ * Clustered against the right rather than spread across the width: the habit name owns the
+ * left of the row, so ending the actions on one vertical edge reads better than starting
+ * them at unrelated places. That edge sits [SCROLLBAR_CLEARANCE_UNITS] in from the content
+ * edge rather than flush against it, so a scroll bar never lands on top of DELETE.
+ *
+ * Underlined [LightTextVariant.Detail] keeps the actions from out-shouting the habit name,
+ * which is set at the same size.
+ *
+ * The row is pinned to [MIN_TOUCH_TARGET], which is also what the day strip occupies, so a
+ * habit's total height doesn't change when edit mode toggles. Each action fills that full
+ * height, so its target is the band around the word, not just the glyphs.
+ */
+@Composable
+private fun HabitActionRow(vararg actions: HabitActionSpec) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(MIN_TOUCH_TARGET),
+            .height(MIN_TOUCH_TARGET)
+            .padding(end = SCROLLBAR_CLEARANCE_UNITS.gridUnitsAsDp()),
         horizontalArrangement = Arrangement.spacedBy(
             space = HABIT_ACTION_GAP_UNITS.gridUnitsAsDp(),
             alignment = Alignment.End,
         ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        HabitAction("RENAME", "Rename $habitName", onRename)
-        HabitAction("ARCHIVE", "Archive $habitName", onArchive)
-        HabitAction("DELETE", "Delete $habitName", onDelete)
+        actions.forEach { HabitAction(it.label, it.clickLabel, it.onClick) }
     }
 }
 

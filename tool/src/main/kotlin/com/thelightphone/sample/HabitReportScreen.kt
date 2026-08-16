@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -26,16 +27,18 @@ import androidx.compose.ui.unit.dp
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
+import com.thelightphone.sdk.ui.LightBarButtonDefaults
 import com.thelightphone.sdk.ui.LightBottomBar
+import com.thelightphone.sdk.ui.LightIcon
+import com.thelightphone.sdk.ui.LightIconConfiguration
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTheme
 import com.thelightphone.sdk.ui.LightThemeController
 import com.thelightphone.sdk.ui.LightThemeTokens
-import com.thelightphone.sdk.ui.LightTopBar
-import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
+import com.thelightphone.sdk.ui.lightClickable
 import com.thelightphone.sdk.ui.verticalGridUnitsAsDp
 import java.time.LocalDate
 import java.time.YearMonth
@@ -72,8 +75,18 @@ private val MIN_VISIBLE_BAR = 4.dp
 
 private val MONTH_LABEL_FORMAT = DateTimeFormatter.ofPattern("MMM")
 
+/** [LightTopBar]'s own metrics, copied so [ReportPagingBar] lines up with every other
+ *  screen's bar. Kept private here rather than shared — they mirror SDK internals, and the
+ *  only honest way to keep them in step is to notice if the SDK's bar ever moves. */
+private const val PAGING_BAR_HEIGHT_UNITS = 3f
+private const val PAGING_BAR_PADDING_UNITS = 1f
+
+/** Visible enough to hold its position and stay recognisable as a chevron, faint enough
+ *  that it never reads as the live control sitting opposite it. */
+private const val DISABLED_CHEVRON_ALPHA = 0.3f
+
 /**
- * Monthly trend report, reached from [HabitSettingsScreen].
+ * Monthly trend report, reached from REPORT in [HomeScreen]'s bottom bar.
  *
  * One line per habit, a vertical bar per month, no numbers anywhere. The question it answers
  * is "more or less than before", not "how many" — counting invites the scoreboard reading the
@@ -81,12 +94,12 @@ private val MONTH_LABEL_FORMAT = DateTimeFormatter.ofPattern("MMM")
  * signal, and the shape of the bars is what identifies the screen, so it carries no title.
  *
  * Active habits only. An archived habit's history is preserved and still reachable — unarchive
- * it and it reappears here — but showing archived lines meant a scrollable screen, and the
- * scrollbar cost horizontal room and made a screen whose whole job is legibility look busy.
+ * it from [HomeScreen]'s edit mode and it reappears here — but showing archived lines meant a
+ * scrollable screen, and the scrollbar cost horizontal room and made a screen whose whole job
+ * is legibility look busy.
  *
- * Shares the one [HabitTrackerViewModel] rather than loading its own copy, same as
- * [HabitSettingsScreen] — the state is already live and there is nothing to persist here.
- * This screen is read-only.
+ * Shares the one [HabitTrackerViewModel] rather than loading its own copy — the state is
+ * already live and there is nothing to persist here. This screen is read-only.
  */
 class HabitReportScreen(
     sealedActivity: SealedLightActivity,
@@ -138,31 +151,16 @@ class HabitReportScreen(
                     .fillMaxSize()
                     .background(LightThemeTokens.colors.background),
             ) {
-                // Exactly the week grid's bar: range in the middle, paging either side, hidden
-                // rather than dimmed when there is nowhere to go. Floored at the first recorded
-                // month and never forward past the current window, so the report cannot show a
-                // month that hasn't happened. The way out is Close at the bottom, which leaves
-                // both bar slots free for navigation.
-                LightTopBar(
-                    leftButton = if (clampedOffset > minOffset) {
-                        LightBarButton.LightIcon(
-                            icon = LightIcons.BACK,
-                            contentDescription = "Earlier months",
-                            onClick = { windowOffset = clampedOffset - 1 },
-                        )
-                    } else {
-                        null
-                    },
-                    center = LightTopBarCenter.Text(windowLabel(window)),
-                    rightButton = if (clampedOffset < 0) {
-                        LightBarButton.LightIcon(
-                            icon = LightIcons.ARROW_RIGHT,
-                            contentDescription = "Later months",
-                            onClick = { windowOffset = clampedOffset + 1 },
-                        )
-                    } else {
-                        null
-                    },
+                // Range in the middle, paging either side. Floored at the first recorded
+                // month and never forward past the current window, so the report cannot show
+                // a month that hasn't happened. The way out is Close at the bottom, which
+                // leaves both bar slots free for navigation.
+                ReportPagingBar(
+                    label = windowLabel(window),
+                    canGoEarlier = clampedOffset > minOffset,
+                    canGoLater = clampedOffset < 0,
+                    onEarlier = { windowOffset = clampedOffset - 1 },
+                    onLater = { windowOffset = clampedOffset + 1 },
                 )
 
                 Column(
@@ -290,6 +288,85 @@ private fun windowLabel(window: List<YearMonth>): String {
     } else {
         "$firstLabel ${first.year} – $lastLabel ${last.year}"
     }
+}
+
+/**
+ * The report's own top bar, hand-built to [LightTopBar]'s metrics rather than using it.
+ *
+ * Both chevrons are always drawn, dimmed when there's nowhere to go. That costs a custom
+ * bar because [LightBarButton] has no disabled state — its buttons are either present at
+ * full strength or absent — and absence is the one thing that can't happen here. A lone
+ * `‹` in the top-left slot is the universal back affordance; on a screen that leaves by a
+ * Close button at the bottom, showing it only when paging is available would read as "go
+ * back" and mean "go back six months". Keeping both anchored means a chevron's position
+ * always says what it does and only its weight says whether it can.
+ *
+ * Everything here mirrors [LightTopBar]: 3u tall, 1u side padding, [LightTextVariant.Fine]
+ * for the label, [LightBarButtonDefaults.ICON_SIZE_UNITS] icons — so it sits at the same
+ * height and reads as the same furniture as every other screen's bar.
+ */
+@Composable
+private fun ReportPagingBar(
+    label: String,
+    canGoEarlier: Boolean,
+    canGoLater: Boolean,
+    onEarlier: () -> Unit,
+    onLater: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(PAGING_BAR_HEIGHT_UNITS.gridUnitsAsDp())
+            .padding(horizontal = PAGING_BAR_PADDING_UNITS.gridUnitsAsDp()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PagingChevron(
+            icon = LightIcons.BACK,
+            description = "Earlier months",
+            enabled = canGoEarlier,
+            onClick = onEarlier,
+        )
+        LightText(
+            text = label,
+            variant = LightTextVariant.Fine,
+            align = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        PagingChevron(
+            icon = LightIcons.ARROW_RIGHT,
+            description = "Later months",
+            enabled = canGoLater,
+            onClick = onLater,
+        )
+    }
+}
+
+/** Dimmed *and* unclickable when disabled — a chevron that looks live and does nothing on
+ *  tap is worse than one that never invited the tap. The content description drops with the
+ *  click so a screen reader doesn't announce an action that isn't there. */
+@Composable
+private fun PagingChevron(
+    icon: LightIconConfiguration,
+    description: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    LightIcon(
+        icon = icon,
+        size = LightBarButtonDefaults.ICON_SIZE_UNITS,
+        contentDescription = if (enabled) description else null,
+        modifier = Modifier
+            .alpha(if (enabled) 1f else DISABLED_CHEVRON_ALPHA)
+            .then(
+                if (enabled) {
+                    Modifier.lightClickable(onClickLabel = description, onClick = onClick)
+                } else {
+                    Modifier
+                },
+            ),
+    )
 }
 
 @Composable

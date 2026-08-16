@@ -38,8 +38,8 @@ internal fun deleteConfirmationMessage(habitName: String, completionCount: Int):
  * two-choice delete confirmation — a fullscreen modal only has room for a message and a
  * single close button, and this needs two: cancel and confirm. Swapping the screen's own
  * content is the simplest way to get a two-choice prompt out of the primitives available.
- * Shared by [HomeScreen] (active habits, deleted from the grid's edit mode) and
- * [HabitSettingsScreen] (archived habits) so both use one message format and one look.
+ * Used by [HomeScreen], which is where every delete now starts — active and archived
+ * habits alike are deleted from the grid's edit mode.
  */
 @Composable
 internal fun HabitDeleteConfirmationContent(message: String, onCancel: () -> Unit, onConfirm: () -> Unit) {
