@@ -866,7 +866,14 @@ private fun HabitBlock(
             Row(modifier = Modifier.fillMaxWidth()) {
                 for (dayIndex in 0..6) {
                     val epochDay = weekStart.plusDays(dayIndex.toLong()).toEpochDay()
-                    val inRange = epochDay in startWeekEpoch..todayEpoch
+                    // Both ends are out of range, but for opposite reasons, and the cell
+                    // says which: a future day is one you can't tick *yet*, a pre-creation
+                    // day is one there was never anything to tick.
+                    val state = when {
+                        epochDay < startWeekEpoch -> DayCellState.BEFORE_HABIT
+                        epochDay > todayEpoch -> DayCellState.FUTURE
+                        else -> DayCellState.TRACKABLE
+                    }
                     Box(
                         modifier = Modifier.weight(1f),
                         contentAlignment = Alignment.Center,
@@ -874,8 +881,12 @@ private fun HabitBlock(
                         DayCheckbox(
                             filled = epochDay in completedDays,
                             isToday = dayIndex == todayIndex,
-                            isFuture = !inRange,
-                            onToggle = if (inRange) { { onToggle(habit.id, epochDay) } } else null,
+                            state = state,
+                            onToggle = if (state == DayCellState.TRACKABLE) {
+                                { onToggle(habit.id, epochDay) }
+                            } else {
+                                null
+                            },
                         )
                     }
                 }
@@ -1002,6 +1013,19 @@ private fun HabitAction(label: String, clickLabel: String, onClick: () -> Unit) 
     }
 }
 
+/** What a day cell can be, relative to the habit it belongs to. */
+private enum class DayCellState {
+    /** In range: tappable, and either done or not. */
+    TRACKABLE,
+
+    /** After today. The day will arrive; it just hasn't. */
+    FUTURE,
+
+    /** Before the week the habit was created in. This day is not un-ticked — it's a day
+     *  the habit didn't exist for, and no tap will ever make it tickable. */
+    BEFORE_HABIT,
+}
+
 /**
  * A single day's check box. Filled = done, outlined = not done — both are neutral;
  * there's no "streak broken" styling for a miss. Today gets a separate outer ring
@@ -1009,25 +1033,35 @@ private fun HabitAction(label: String, clickLabel: String, onClick: () -> Unit) 
  * when the box is filled (a same-color thicker border on a filled square would be
  * invisible against its own fill).
  *
- * Days outside a habit's trackable range — after today, or before the week its habit was
- * created in — render with a secondary (dimmer) border and don't respond to taps: clearly
- * not-yet-available (future) or not-yet-existing (pre-creation) rather than just
- * "unchecked."
+ * The three states are three different drawings, which is the point. A [DayCellState.FUTURE]
+ * day keeps its box in a dimmer border — it's a real day that will come round. A
+ * [DayCellState.BEFORE_HABIT] day draws *nothing*: it holds its space so the columns stay
+ * aligned, but there's no box, so a habit's row visibly begins where the habit does.
+ *
+ * Drawing those two the same way is what made a newly added habit look broken — page back a
+ * week and its untappable cells were indistinguishable from unreachable future ones, with
+ * nothing saying why. An empty stretch of row says "this habit wasn't here yet" without a
+ * word, and can't be mistaken for seven days you failed to tick. Week-boundary snapping in
+ * [HabitBlock] means a blank stretch is always a whole week, never a ragged part of one, and
+ * the week chevrons stop at the earliest active habit's creation week, so a row that's blank
+ * end to end always sits beside one that isn't.
  *
  * Edit mode needs no muted variant of this: the strip isn't drawn at all while editing
  * (see [HabitBlock]), so there is no inert grid on screen for a tap to look live against.
  */
 @Composable
-private fun DayCheckbox(filled: Boolean, isToday: Boolean, isFuture: Boolean, onToggle: (() -> Unit)?) {
+private fun DayCheckbox(
+    filled: Boolean,
+    isToday: Boolean,
+    state: DayCellState,
+    onToggle: (() -> Unit)?,
+) {
     val colors = LightThemeTokens.colors
     val cellSize = DAY_CELL_UNITS.gridUnitsAsDp()
     val haloSize = cellSize + 10.dp
     // Hit area only. The halo stays at its drawn size so raising the target doesn't inflate
     // the today ring along with it — 45dp of drawn halo, 48dp of tappable box around it.
     val touchSize = maxOf(haloSize, MIN_TOUCH_TARGET)
-    val borderColor = if (isFuture) colors.contentSecondary else colors.content
-    val fillColor = if (filled) colors.content else Color.Transparent
-    val showTodayRing = isToday
 
     Box(
         modifier = Modifier
@@ -1044,7 +1078,11 @@ private fun DayCheckbox(filled: Boolean, isToday: Boolean, isFuture: Boolean, on
             },
         contentAlignment = Alignment.Center,
     ) {
-        if (showTodayRing) {
+        // Nothing drawn, but the box still occupies its column so the strip doesn't
+        // reflow and the days below the letters stay in their places.
+        if (state == DayCellState.BEFORE_HABIT) return@Box
+
+        if (isToday) {
             Box(
                 modifier = Modifier
                     .size(haloSize)
@@ -1054,8 +1092,15 @@ private fun DayCheckbox(filled: Boolean, isToday: Boolean, isFuture: Boolean, on
         Box(
             modifier = Modifier
                 .size(cellSize)
-                .border(width = 1.dp, color = borderColor)
-                .background(fillColor),
+                .border(
+                    width = 1.dp,
+                    color = if (state == DayCellState.FUTURE) {
+                        colors.contentSecondary
+                    } else {
+                        colors.content
+                    },
+                )
+                .background(if (filled) colors.content else Color.Transparent),
         )
     }
 }
